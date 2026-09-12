@@ -67,6 +67,9 @@ def charger(dossier_ou_paths) -> pd.DataFrame:
         d["fichier"] = p.split("/")[-1]
         blocs.append(d)
     a = pd.concat(blocs, ignore_index=True)
+    if "mois" not in a.columns:
+        j = pd.to_datetime(a.get("jour"), errors="coerce", dayfirst=True)
+        a["mois"] = j.dt.month
     a["mois"] = pd.to_numeric(a["mois"], errors="coerce").astype("Int64")
     a["temps"] = pd.to_numeric(a.temps, errors="coerce")
     a["heures"] = a.apply(

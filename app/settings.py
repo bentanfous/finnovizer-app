@@ -12,7 +12,7 @@ En local, les valeurs par défaut écrivent sous ./data.
 import os
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"  # fix: mois lu dans la donnée (temps)
 
 RAW_DIR = Path(os.environ.get("INNOVIZER_RAW_DIR", "./data/raw_uploads"))
 DERIVED_DIR = Path(os.environ.get("INNOVIZER_DERIVED_DIR", "./data/derived"))
