@@ -82,6 +82,34 @@ Le premier build parse les bulletins (~5 min pour 12 mois, une seule fois : le
 résultat est mis en cache sur le volume). Les builds suivants sont quasi
 instantanés.
 
+## Dépannage — `ModuleNotFoundError: No module named 'app'`
+
+Uvicorn démarre mais ne trouve pas le dossier `app/`. Cause quasi certaine :
+**le contenu du projet n'est pas à la racine du repo GitHub**.
+
+Vérifie sur GitHub : à la racine du repo, tu dois voir directement `app/`,
+`innovizer/`, `requirements.txt`, `railway.json`. Si à la place tu vois un
+seul dossier (ex. `innovizer_app/` ou `innovizer-pilot/`) qui contient tout
+ça, c'est le problème.
+
+Deux réparations, l'une suffit :
+
+- **La plus simple** — dans Railway → service → **Settings → Source** →
+  **Root Directory**, mets le nom du sous-dossier (ex. `innovizer_app`).
+  Railway se placera dedans. Redeploy.
+- **Ou** remets le contenu à la racine du repo :
+  ```bash
+  git mv innovizer_app/* .
+  git mv innovizer_app/.gitignore innovizer_app/.env.example .
+  rmdir innovizer_app
+  git commit -m "contenu à la racine" && git push
+  ```
+
+Le projet inclut un `nixpacks.toml` qui force `PYTHONPATH=.`, ce qui règle le
+cas où le module n'est pas résolu même à la racine. Si tu utilises le
+`Dockerfile` plutôt que Nixpacks, il n'y a pas ce souci : le `WORKDIR /app`
+place déjà tout au bon endroit.
+
 ## Arborescence du volume après usage
 
 ```

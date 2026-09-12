@@ -46,20 +46,28 @@ def charger(dossier_ou_paths) -> pd.DataFrame:
         paths = glob.glob(dossier_ou_paths)
     else:
         paths = list(dossier_ou_paths)
-    paths = sorted(paths, key=lambda p: int(re.search(r"-(\d+)(?:__\d+_)?\.xlsx$",
-                                                      p.replace("_2025", "")).group(1))
-                   if re.search(r"-(\d+)", p) else 0)
+    def _rang(p):
+        m = re.search(r"(\d{4})-(\d{1,2})", p)
+        return int(m.group(2)) if m else 0
+    paths = sorted(paths, key=_rang)
     blocs = []
     for p in paths:
-        m = re.search(r"export-\d{4}-(\d{1,2})", p)
         d = pd.read_excel(p, sheet_name="Détails", header=0)
         if len(d.columns) != len(COLONNES):
             raise ValueError(f"{p}: {len(d.columns)} colonnes, {len(COLONNES)} attendues")
         d.columns = COLONNES
-        d["mois"] = int(m.group(1)) if m else None
+        # le mois vient de la donnée (colonne 'jour'), pas du nom de fichier :
+        # sur un hébergement, le fichier peut être renommé à l'upload.
+        jour = pd.to_datetime(d["jour"], errors="coerce", dayfirst=True)
+        d["mois"] = jour.dt.month
+        # repli sur le nom de fichier si la date n'est pas exploitable
+        m = re.search(r"(\d{4})-(\d{1,2})", p)
+        if d["mois"].isna().all() and m:
+            d["mois"] = int(m.group(2))
         d["fichier"] = p.split("/")[-1]
         blocs.append(d)
     a = pd.concat(blocs, ignore_index=True)
+    a["mois"] = pd.to_numeric(a["mois"], errors="coerce").astype("Int64")
     a["temps"] = pd.to_numeric(a.temps, errors="coerce")
     a["heures"] = a.apply(
         lambda r: r.temps * HEURES_PAR_JOUR if str(r.unite).startswith("jour")

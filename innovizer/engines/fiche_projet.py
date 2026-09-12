@@ -135,6 +135,13 @@ class FicheProjet:
 
 # --------------------------------------------------------------- moteur
 
+def _periode(t) -> str:
+    mois = t["mois"].dropna() if "mois" in t else []
+    if len(mois) == 0:
+        return ""
+    return f"{int(mois.min()):02d} → {int(mois.max()):02d}"
+
+
 def contexte_depuis_brique01(code_projet, data: dict, alias: dict | None = None) -> Contexte:
     """Assemble le contexte d'un projet depuis les sorties de la Brique 01."""
     from ..identity import cle_personne
@@ -164,7 +171,7 @@ def contexte_depuis_brique01(code_projet, data: dict, alias: dict | None = None)
         thematique_amorce=str(s.thematique_chapeau) if s is not None else "",
         heures=round(float(t.heures.sum()), 1),
         collaborateurs=collaborateurs,
-        periode=f"{int(t.mois.min()):02d}/2025 → {int(t.mois.max()):02d}/2025" if len(t) else "",
+        periode=_periode(t),
         alertes=alertes,
     )
 
