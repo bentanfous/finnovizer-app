@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Innovizer Pilot</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#171d2b; --line:#26304a; --ink:#e8ecf5;
+    --dim:#8b96ad; --accent:#5b8cff; --ok:#3fb27f; --warn:#e0a53a; --err:#e05a5a;
+    --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{padding:18px 28px;border-bottom:1px solid var(--line);display:flex;
+    align-items:baseline;gap:14px}
+  header h1{font-size:18px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .v{color:var(--dim);font:12px var(--mono)}
+  header .job{margin-left:auto;color:var(--dim);font:12px var(--mono)}
+  main{max-width:1080px;margin:0 auto;padding:24px 28px 80px}
+  .steps{display:flex;gap:8px;margin-bottom:26px;flex-wrap:wrap}
+  .step{padding:6px 12px;border:1px solid var(--line);border-radius:20px;
+    font-size:13px;color:var(--dim)}
+  .step.on{border-color:var(--accent);color:var(--ink)}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:20px 22px;margin-bottom:18px}
+  .panel h2{margin:0 0 4px;font-size:15px}
+  .panel p.sub{margin:0 0 16px;color:var(--dim);font-size:13px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+  .cat{border:1px dashed var(--line);border-radius:10px;padding:12px;position:relative}
+  .cat.filled{border-style:solid;border-color:var(--ok)}
+  .cat .name{font-size:13px;font-weight:600;margin-bottom:2px}
+  .cat .hint{font-size:11px;color:var(--dim);margin-bottom:8px}
+  .cat .files{font:11px var(--mono);color:var(--ok);word-break:break-all}
+  .cat input{position:absolute;inset:0;opacity:0;cursor:pointer}
+  button{background:var(--accent);color:#fff;border:0;border-radius:8px;
+    padding:10px 18px;font-size:14px;cursor:pointer;font-weight:600}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--ink)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin:8px 0}
+  .kpi .b{background:#12172233;border:1px solid var(--line);border-radius:10px;padding:12px}
+  .kpi .b .n{font-size:22px;font-weight:700}
+  .kpi .b .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+  table{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-weight:600;font-size:11px;text-transform:uppercase}
+  td.num{font:12px var(--mono);text-align:right}
+  .tag{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600}
+  .t-ok{background:#3fb27f22;color:var(--ok)} .t-warn{background:#e0a53a22;color:var(--warn)}
+  .t-err{background:#e05a5a22;color:var(--err)} .t-dim{background:#8b96ad22;color:var(--dim)}
+  .proj{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px;
+    display:flex;align-items:center;gap:12px;cursor:pointer}
+  .proj:hover{border-color:var(--accent)}
+  .proj .h{font:12px var(--mono);color:var(--dim)}
+  .eva{background:#0c1018;border:1px solid var(--line);border-radius:10px;padding:16px;
+    max-height:420px;overflow-y:auto;margin-bottom:12px}
+  .msg{margin-bottom:12px}
+  .msg .who{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+  .msg.eva .txt{color:var(--ink)} .msg.cto .txt{color:#bcd0ff}
+  .msg .meta{font:11px var(--mono);color:var(--dim)}
+  textarea{width:100%;background:#0c1018;border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);padding:10px;font:14px inherit;resize:vertical;min-height:64px}
+  input[type=text],select{background:#0c1018;border:1px solid var(--line);border-radius:8px;
+    color:var(--ink);padding:9px 11px;font-size:14px}
+  .cov{display:flex;gap:4px;flex-wrap:wrap;margin:6px 0}
+  .cov span{font:10px var(--mono);padding:2px 6px;border-radius:4px}
+  .hide{display:none}
+  .note{font-size:12px;color:var(--warn);margin-top:10px}
+  a.dl{color:var(--accent);font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Innovizer</h1><span class="v" id="ver">pilot</span>
+  <span class="job" id="jobid"></span>
+</header>
+<main>
+  <div class="steps">
+    <div class="step on" data-s="0">00 · Sources</div>
+    <div class="step" data-s="1">01 · Data Hub</div>
+    <div class="step" data-s="2">02 · Screening</div>
+    <div class="step" data-s="3">03 · Audit Eva</div>
+  </div>
+
+  <!-- 00 SOURCES -->
+  <section id="s0">
+    <div class="panel">
+      <h2>Dossier</h2>
+      <p class="sub">Un dossier = un client, un exercice.</p>
+      <div class="row">
+        <input type="text" id="client" placeholder="Client (ex. DUNASYS INGENIERIE)">
+        <input type="text" id="exercice" value="2025" style="width:90px">
+        <button id="newjob">Créer le dossier</button>
+      </div>
+    </div>
+    <div class="panel" id="uploads" style="opacity:.4;pointer-events:none">
+      <h2>Fichiers bruts</h2>
+      <p class="sub">Ce que le client vous envoie déjà. Aucun format à préparer.</p>
+      <div class="grid" id="cats"></div>
+      <div class="row" style="margin-top:16px">
+        <button id="build" disabled>Construire le Data Hub</button>
+        <span class="note" id="rgpd">⚠ Données personnelles : n'utilisez de la paie nominative réelle
+          qu'avec une base légale RGPD côté client.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 01 DATA HUB -->
+  <section id="s1" class="hide">
+    <div class="panel">
+      <h2>Data Hub</h2>
+      <p class="sub">Construit automatiquement par Innovizer à partir des fichiers bruts.
+        <a class="dl" id="export" href="#">Télécharger brique01.xlsx</a></p>
+      <div class="kpi" id="kpis"></div>
+    </div>
+    <div class="panel">
+      <h2>Contrôles</h2>
+      <p class="sub">Réconciliations et cohérences. Un contrôle constate, il ne corrige pas.</p>
+      <table id="ctrls"><thead><tr><th>Code</th><th>Contrôle</th><th>Statut</th>
+        <th>Détail</th></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="panel">
+      <h2>Qualification du personnel</h2>
+      <div id="qual"></div>
+    </div>
+    <div class="row"><button id="toscr">Voir le screening projets →</button></div>
+  </section>
+
+  <!-- 02 SCREENING -->
+  <section id="s2" class="hide">
+    <div class="panel">
+      <h2>Projets à instruire</h2>
+      <p class="sub">Screening large : les fonctions support sont écartées d'office.
+        L'éligibilité se décide à l'audit, pas ici.</p>
+      <div id="projlist"></div>
+    </div>
+  </section>
+
+  <!-- 03 EVA -->
+  <section id="s3" class="hide">
+    <div class="panel">
+      <h2>Audit Eva — <span id="evaproj" class="v"></span></h2>
+      <div class="row" style="margin-bottom:12px">
+        <select id="regime">
+          <option value="A_DETERMINER">Régime à déterminer</option>
+          <option value="CIR">CIR (recherche)</option>
+          <option value="CII">CII (innovation)</option>
+          <option value="MIXTE">Mixte</option>
+        </select>
+        <input type="text" id="interlo" placeholder="Interlocuteur (ex. Directeur technique)">
+        <button id="starteva">Démarrer l'entretien</button>
+      </div>
+      <div class="cov" id="cov"></div>
+      <div class="eva hide" id="chat"></div>
+      <div class="row hide" id="answerbox">
+        <textarea id="answer" placeholder="Réponse de l'interlocuteur…"></textarea>
+      </div>
+      <div class="row hide" id="answerbtns">
+        <button id="send">Envoyer</button>
+        <button class="ghost" id="finish">Finaliser le pré-audit</button>
+      </div>
+      <div id="synth" class="hide"></div>
+    </div>
+    <div class="row"><button class="ghost" id="backscr">← Retour screening</button></div>
+  </section>
+</main>
+
+<script>
+const API = "";
+let JOB=null, EVA=null;
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const fmt=n=>new Intl.NumberFormat("fr-FR").format(Math.round(n));
+const eur=n=>fmt(n)+" €";
+
+const CATS=[
+  ["paie","Livre de paie (.xlsx)"],["bulletins","Bulletins de paie (.pdf)"],
+  ["temps","Suivi des temps (.xlsx)"],["fournisseurs","Fournisseurs (compta)"],
+  ["immobilisations","Immobilisations"],["cv_diplomes","CV & diplômes (.pdf)"],
+  ["mesr_cir","Référentiel MESR CIR"],["mesr_cii","Référentiel MESR CII"],
+];
+
+function step(n){$$(".steps .step").forEach(s=>s.classList.toggle("on",+s.dataset.s===n));
+  [0,1,2,3].forEach(i=>$("#s"+i).classList.toggle("hide",i!==n));}
+
+// build category cards
+$("#cats").innerHTML=CATS.map(([k,label])=>`
+  <label class="cat" data-k="${k}">
+    <div class="name">${label}</div>
+    <div class="hint">glisser ou cliquer</div>
+    <div class="files" id="f-${k}"></div>
+    <input type="file" multiple data-k="${k}">
+  </label>`).join("");
+
+async function api(path,opts={}){
+  const r=await fetch(API+path,opts);
+  if(!r.ok){const t=await r.text();throw new Error(t||r.status)}
+  return r.headers.get("content-type")?.includes("json")?r.json():r;
+}
+
+$("#newjob").onclick=async()=>{
+  const client=$("#client").value.trim();
+  const exercice=+$("#exercice").value||2025;
+  const j=await api("/api/jobs",{method:"POST",headers:{"content-type":"application/json"},
+    body:JSON.stringify({client,exercice})});
+  JOB=j.id; $("#jobid").textContent="dossier "+JOB;
+  $("#uploads").style.opacity=1; $("#uploads").style.pointerEvents="auto";
+};
+
+$$("#cats input").forEach(inp=>inp.onchange=async e=>{
+  const k=inp.dataset.k;
+  for(const file of inp.files){
+    const fd=new FormData(); fd.append("categorie",k); fd.append("fichier",file);
+    const res=await api(`/api/jobs/${JOB}/files`,{method:"POST",body:fd});
+    const names=res.inventaire[k]||[];
+    $("#f-"+k).textContent=names.join(", ");
+    inp.closest(".cat").classList.add("filled");
+  }
+  $("#build").disabled=false;
+});
+
+$("#build").onclick=async()=>{
+  $("#build").textContent="Construction…"; $("#build").disabled=true;
+  try{
+    const hub=await api(`/api/jobs/${JOB}/build`,{method:"POST",
+      headers:{"content-type":"application/json"},body:JSON.stringify({arbitrages:{}})});
+    renderHub(hub); step(1);
+  }catch(e){alert("Échec : "+e.message);}
+  $("#build").textContent="Construire le Data Hub"; $("#build").disabled=false;
+};
+
+function tag(status){
+  const s=status.toUpperCase();
+  if(s==="OK")return`<span class="tag t-ok">OK</span>`;
+  if(s.includes("ECART"))return`<span class="tag t-err">${status}</span>`;
+  if(s.includes("TRAITER")||s.includes("MANQ"))return`<span class="tag t-warn">${status}</span>`;
+  return`<span class="tag t-dim">${status}</span>`;
+}
+
+function renderHub(h){
+  $("#export").href=`/api/jobs/${JOB}/export`;
+  const k=[];
+  if(h.personnel){k.push(["Salariés",fmt(h.personnel.salaries)]);
+    k.push(["Coût chargé",eur(h.personnel.cout_charge)]);}
+  if(h.cotisations?.ELIGIBLE!=null)k.push(["Cotis. éligibles",eur(h.cotisations.ELIGIBLE)]);
+  if(h.projets)k.push(["Projets à instruire",fmt(h.projets.a_instruire)]);
+  if(h.fournisseurs)k.push(["Fournisseurs à vérifier",fmt(h.fournisseurs.a_verifier)]);
+  $("#kpis").innerHTML=k.map(([l,n])=>`<div class="b"><div class="n">${n}</div>
+    <div class="l">${l}</div></div>`).join("");
+  $("#ctrls tbody").innerHTML=(h.controles||[]).map(c=>`<tr>
+    <td class="h">${c.code}</td><td>${c.libelle}</td><td>${tag(c.statut)}</td>
+    <td class="num">${c.calcule}${c.attendu!=null?" / "+c.attendu:""}</td></tr>`).join("");
+  if(h.qualification){
+    $("#qual").innerHTML="<div class='row'>"+Object.entries(h.qualification).map(
+      ([s,n])=>`<span class="tag ${s.startsWith("ELIGIBLE")?"t-ok":
+        s==="NON_RD_FUNCTION"?"t-dim":"t-warn"}">${s} · ${n}</span>`).join(" ")+"</div>";
+  }
+}
+
+$("#toscr").onclick=async()=>{await loadProjects();step(2);};
+
+async function loadProjects(){
+  const r=await api(`/api/jobs/${JOB}/projects`);
+  $("#projlist").innerHTML=r.projets.map(p=>`
+    <div class="proj" data-code="${p.code_projet}">
+      <div style="flex:1">
+        <div>${p.code_projet}</div>
+        <div class="h">${p.thematique_chapeau||"—"} · ${p.collaborateurs} collab.</div>
+      </div>
+      <div class="num">${fmt(p.heures)} h</div>
+      <button class="ghost">Auditer →</button>
+    </div>`).join("");
+  $$("#projlist .proj").forEach(el=>el.onclick=()=>openEva(el.dataset.code));
+}
+
+let CURRENT=null;
+function openEva(code){CURRENT=code;$("#evaproj").textContent=code;
+  $("#chat").classList.add("hide");$("#answerbox").classList.add("hide");
+  $("#answerbtns").classList.add("hide");$("#synth").classList.add("hide");
+  $("#starteva").disabled=false;step(3);}
+
+$("#starteva").onclick=async()=>{
+  const r=await api(`/api/jobs/${JOB}/interviews`,{method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({code_projet:CURRENT,regime:$("#regime").value,
+      interlocuteur:$("#interlo").value})});
+  EVA=r.id;$("#chat").classList.remove("hide");$("#answerbox").classList.remove("hide");
+  $("#answerbtns").classList.remove("hide");$("#synth").classList.add("hide");
+  $("#chat").innerHTML="";
+  addMsg("eva",r.ouverture);
+  addMsg("eva",r.question.question,r.question.axe+" · "+r.question.nature);
+  $("#answer").focus();
+};
+
+function addMsg(who,txt,meta){
+  const d=document.createElement("div");d.className="msg "+who;
+  d.innerHTML=`<div class="who">${who==="eva"?"Eva":"Interlocuteur"}</div>
+    <div class="txt">${txt}</div>${meta?`<div class="meta">${meta}</div>`:""}`;
+  $("#chat").appendChild(d);$("#chat").scrollTop=$("#chat").scrollHeight;
+}
+function renderCov(c){$("#cov").innerHTML=Object.entries(c).map(([a,st])=>{
+  const col=st==="COMPLET"?"var(--ok)":st==="PARTIEL"?"var(--warn)":"#8b96ad33";
+  const ink=st==="VIDE"?"var(--dim)":"#0c1018";
+  return`<span style="background:${col};color:${ink}">${a}</span>`}).join("");}
+
+$("#send").onclick=async()=>{
+  const txt=$("#answer").value.trim();if(!txt)return;
+  addMsg("cto",txt);$("#answer").value="";
+  const r=await api(`/api/interviews/${EVA}/answer`,{method:"POST",
+    headers:{"content-type":"application/json"},body:JSON.stringify({reponse:txt})});
+  if(r.classification?.etat)
+    $("#chat").lastChild.querySelector(".txt").insertAdjacentHTML("afterend",
+      `<div class="meta">↳ ${r.classification.etat}</div>`);
+  renderCov(r.couverture);
+  if(r.termine||!r.question){addMsg("eva","Merci, j'ai ce qu'il me faut.");
+    $("#answerbox").classList.add("hide");}
+  else addMsg("eva",r.question.question,r.question.axe+" · "+r.question.nature);
+};
+$("#answer")?.addEventListener("keydown",e=>{
+  if(e.key==="Enter"&&(e.metaKey||e.ctrlKey))$("#send").click();});
+
+$("#finish").onclick=async()=>{
+  const f=await api(`/api/interviews/${EVA}/finalize`,{method:"POST"});
+  const s=f.synthese;
+  const dcol=s.defendabilite==="FORTE"?"t-ok":s.defendabilite==="MOYENNE"?"t-warn":"t-err";
+  $("#synth").classList.remove("hide");
+  $("#synth").innerHTML=`
+    <div class="kpi">
+      <div class="b"><div class="n">${s.couverture_pct}%</div><div class="l">Couverture</div></div>
+      <div class="b"><div class="n"><span class="tag ${dcol}">${s.defendabilite}</span></div>
+        <div class="l">Défendabilité (${s.score_defendabilite})</div></div>
+      <div class="b"><div class="n">${s.red_flags.length}</div><div class="l">Red flags</div></div>
+    </div>
+    ${s.red_flags.length?`<p class="note">${s.red_flags.map(r=>"⚠ "+r.libelle).join("<br>")}</p>`:""}
+    ${s.pieces_a_reclamer.length?`<div class="sub">Pièces à réclamer : ${s.pieces_a_reclamer.join(", ")}</div>`:""}
+    ${s.liens_verrou.length?`<div class="sub">Liens de verrou : ${s.liens_verrou.map(l=>l.code_projet).join(", ")}</div>`:""}
+    <p class="note">Revue experte requise avant intégration à l'assiette.</p>`;
+};
+
+$("#toscr")&&($("#backscr").onclick=()=>step(2));
+</script>
+</body>
+</html>
