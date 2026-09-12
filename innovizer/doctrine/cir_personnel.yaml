@@ -1,0 +1,111 @@
+# Innovizer — doctrine CIR, cotisations patronales du personnel.
+#
+# Chaque règle porte sa source et son niveau de certitude. Le moteur ne
+# contient plus de liste en dur : il lit ce fichier. Une rubrique inconnue
+# tombe en TO_REVIEW, jamais en éligible.
+#
+# cir_status : ELIGIBLE | NON_ELIGIBLE | TO_REVIEW
+# confidence : definitive (doctrine explicite) | interpretation | client_position
+#
+# PRINCIPE (BOI-BIC-RICI-10-10-20-20) : seules les cotisations sociales
+# obligatoires ouvrant directement droit à des prestations ou avantages au
+# profit du personnel de recherche sont retenues. Les taxes et participations
+# assises sur les salaires en sont exclues.
+
+version: "2025.1"
+source_principale: BOI-BIC-RICI-10-10-20-20
+date_revue: "2026-09-12"
+
+rules:
+
+  # --- éligibles : cotisations sociales obligatoires ouvrant droit ----------
+  assurance_maladie:
+    match: ["Assurance maladie", "Compl[ée]ment d'assurance maladie"]
+    cir_status: ELIGIBLE
+    source: BOI-BIC-RICI-10-10-20-20
+    confidence: definitive
+  assurance_vieillesse:
+    match: ["Assurance vieillesse"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+  allocations_familiales:
+    match: ["Allocations familiales", "Compl[ée]ment d'allocations familiales"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+  accidents_travail:
+    match: ["Accidents du travail"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+  assurance_chomage:
+    match: ["Assurance ch[oô]mage", "Fonds national de garantie des salaires"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+  retraite_complementaire:
+    match: ["Retraite compl[ée]mentaire unifi[ée]e AGIRC-ARRCO", "CEG sur tranche",
+            "Contribution d'Equilibre Technique"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+  prevoyance_mutuelle:
+    match: ["Pr[ée]voyance - Tranche", "Mutuelle"]
+    cir_status: ELIGIBLE
+    confidence: interpretation
+    note: >
+      Retenues seulement si obligatoires et ouvrant droit à prestation.
+      Une prévoyance/mutuelle facultative ou sur-complémentaire est à écarter :
+      vérifier le caractère obligatoire au dossier.
+  reductions:
+    match: ["R[ée]duction Fillon", "R[ée]duction des cotisations patronales"]
+    cir_status: ELIGIBLE
+    confidence: definitive
+    note: réductions de cotisations, portées en diminution de l'assiette.
+
+  # --- non éligibles : taxes et participations assises sur les salaires -----
+  apec:
+    match: ["APEC"]
+    cir_status: NON_ELIGIBLE
+    source: BOI-BIC-RICI-10-10-20-20
+    paragraph: "320"
+    confidence: definitive
+    note: >
+      La contribution APEC est expressément exclue des cotisations retenues
+      pour le CIR. (Correction doctrinale — était classée éligible à tort.)
+  taxe_apprentissage:
+    match: ["Taxe d'apprentissage"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+  formation_professionnelle:
+    match: ["formation professionnelle continue", "CPF-CDD"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+  paritarisme:
+    match: ["Fonds pour le paritarisme", "Organisations syndicales"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+  forfait_social:
+    match: ["Forfait social"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+  rupture_conventionnelle:
+    match: ["Contribution patronale Rupture Conventionnelle"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+  fnal:
+    match: ["FNAL"]
+    cir_status: NON_ELIGIBLE
+    source: BOI-BIC-RICI-10-10-20-20
+    confidence: definitive
+    note: contribution logement assise sur les salaires.
+  csa:
+    match: ["Contribution Solidarit[ée] Autonomie"]
+    cir_status: NON_ELIGIBLE
+    confidence: definitive
+
+  # --- position de dossier, jamais figée dans le moteur global -------------
+  titres_restaurant:
+    match: ["Titres-restaurant"]
+    cir_status: TO_REVIEW
+    confidence: client_position
+    note: >
+      Part employeur des titres-restaurant. N'est pas une cotisation sociale
+      ouvrant droit à prestation. Peut être retenue sur position explicite du
+      conseil, à documenter au dossier — jamais éligible par défaut.
