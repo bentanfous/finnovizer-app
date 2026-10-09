@@ -82,7 +82,25 @@ class Brique01:
         return self
 
     def charger_bulletins(self, motif):
-        b = ing_bul.parse_annee(_glob.glob(motif), cache_dir=self.cache_dir)
+        paths = _glob.glob(motif)
+        b = ing_bul.parse_annee(paths, cache_dir=self.cache_dir)
+        if b is None or not len(b):
+            # Aucun bulletin exploité : format non reconnu, PDF scanné sans
+            # couche texte, ou motif sans correspondance. On CONSTATE et on
+            # laisse le Data Hub se construire sur le livre de paie seul,
+            # plutôt que de faire échouer toute la construction. Le détail
+            # distingue « 0 PDF vu » (problème d'upload/motif) de « N PDF vus,
+            # 0 ligne » (parsing : scan, format, ou cache à repurger).
+            n = len(paths)
+            detail = ("0 PDF trouvé — vérifier l'upload des bulletins"
+                      if n == 0 else
+                      f"{n} PDF vu(s), 0 ligne extraite — PDF scanné/non "
+                      "textuel, format non reconnu, ou cache vide persistant")
+            self.ctrl.append([dict(
+                code="BUL-parse", libelle="extraction des bulletins de paie",
+                attendu="> 0 ligne", calcule=f"{n} PDF, 0 ligne", ecart=None,
+                statut="A_TRAITER", detail=detail)])
+            return self
         ref = self._substrat("people", ing_bul.referentiel_salaries(b))
         self.data.update(bulletins=b, salaries=ref)
         if "paie_agregat" in self.data:

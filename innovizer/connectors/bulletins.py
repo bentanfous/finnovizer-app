@@ -1,6 +1,11 @@
 """
 Innovizer — Brique 01 / sous-module BULLETINS
-Extraction des bulletins de paie mensuels (PDF texte, un PDF = tous les salariés du mois).
+Extraction des bulletins de paie (PDF texte). Deux organisations de fichiers
+sont gérées indifféremment, le mois étant lu DANS le contenu de chaque bulletin :
+    option 2 — un PDF = un mois, tous les salariés (cas Dunasys) ;
+    option 1 — un PDF = un salarié, ses 12 bulletins mensuels de l'année.
+Les entrées/sorties en cours d'année sont correctes : un salarié n'est agrégé
+que sur les mois où il a effectivement un bulletin (mois_presence réel).
 
 Complète le livre de paie avec ce qu'il ne contient pas :
     emploi, catégorie, classification, date de début de contrat,
@@ -12,8 +17,10 @@ MINIMISATION : le bulletin contient des données personnelles inutiles au CIR
 Ce parser ne les extrait JAMAIS. Ne pas ajouter de champ sans arbitrage RGPD.
 """
 
+import os
 import re
 import unicodedata
+import pandas as pd
 import pypdf
 
 CHAMPS_INTERDITS = {"n_securite_sociale", "adresse", "absences_maladie"}
@@ -65,6 +72,24 @@ def _champ(texte, motif, groupe=1):
     return m.group(groupe).strip() if m else None
 
 
+def _mois_du_texte(texte: str) -> int | None:
+    """Mois de la période de paie, LU DANS LE CONTENU du bulletin (et non dans
+    le nom de fichier). C'est ce qui permet de traiter indifféremment :
+      - option 2 : un PDF = un mois, tous les salariés (toutes les pages ont le
+        même mois) ;
+      - option 1 : un PDF = un salarié, toute l'année (chaque bulletin mensuel
+        porte son propre mois).
+    Priorité à la date de début de période (JJ/MM/AAAA), repli sur le nom du
+    mois en toutes lettres."""
+    m = re.search(r"D[ée]but de p[ée]riode\s*:?\s*\d{2}/(\d{2})/\d{4}", texte)
+    if m:
+        return int(m.group(1))
+    for nom, num in MOIS.items():
+        if re.search(rf"\b{re.escape(nom)}\b", texte, re.I):
+            return num
+    return None
+
+
 def parse_page(texte: str) -> dict | None:
     if "BULLETIN DE PAIE" not in texte:
         return None
@@ -75,6 +100,7 @@ def parse_page(texte: str) -> dict | None:
     return {
         "person_key": normalize_key(nom),
         "nom": nom,
+        "mois": _mois_du_texte(texte),   # mois lu dans le bulletin (options 1 & 2)
         "matricule": mat,
         "emploi": _champ(texte, r"EMPLOI\s+(.+)"),
         "categorie": _champ(texte, r"CATEGORIE\s+(.+)"),
@@ -92,34 +118,52 @@ def parse_page(texte: str) -> dict | None:
 
 
 def parse_pdf(path: str) -> list:
-    """Un PDF mensuel contient N salariés sur ~3 pages chacun.
-    On fusionne les pages d'un même salarié (les champs vides sont complétés)."""
-    mois = next((v for k, v in MOIS.items() if k in path.lower()), None)
+    """Extrait un enregistrement par (salarié, mois).
+
+    Le mois vient du CONTENU de chaque bulletin, avec repli sur le mois déduit
+    du nom de fichier (utile en option 2 si une page n'a pas la période). On
+    regroupe par (salarié, mois) — pas seulement par salarié — pour que
+    l'option 1 (un PDF = un salarié sur 12 mois) produise bien 12 lignes et non
+    une seule. Les pages d'un même bulletin se complètent (champs vides)."""
+    mois_fichier = next(
+        (v for k, v in MOIS.items() if k in os.path.basename(path).lower()), None)
     reader = pypdf.PdfReader(path)
-    par_personne = {}
+    par_cle = {}
     for page in reader.pages:
         d = parse_page(page.extract_text())
         if not d:
             continue
-        d["mois"] = mois
-        cle = d["person_key"]
-        if cle not in par_personne:
-            par_personne[cle] = d
+        d["mois"] = d.get("mois") or mois_fichier
+        cle = (d["person_key"], d["mois"])
+        if cle not in par_cle:
+            par_cle[cle] = d
         else:
             for k, v in d.items():
-                if par_personne[cle].get(k) in (None, "") and v not in (None, ""):
-                    par_personne[cle][k] = v
-    return list(par_personne.values())
+                if par_cle[cle].get(k) in (None, "") and v not in (None, ""):
+                    par_cle[cle][k] = v
+    return list(par_cle.values())
 
 
-def parse_annee(paths: list, cache_dir: str | None = None, workers: int = 4):
+def parse_annee(paths: list, cache_dir: str | None = None, workers: int | None = None):
     """Parse en parallèle, avec cache par fichier (clé = chemin + mtime).
 
     L'extraction texte de ~140 pages par PDF coûte ~25 s ; sur 12 mois c'est
     5 minutes. Les bulletins ne changent jamais une fois émis : on les parse
-    une fois, on garde le résultat."""
+    une fois, on garde le résultat.
+
+    MÉMOIRE : chaque worker charge un PDF entier (plusieurs dizaines de Mo en
+    pointe). Pour ne pas saturer un conteneur contraint (Railway), le nombre de
+    workers est volontairement bas et réglable via INNOVIZER_PDF_WORKERS
+    (défaut 2), borné au nombre de fichiers ; en cas d'échec du pool, repli
+    séquentiel."""
     import pandas as pd, json, hashlib, os
     from concurrent.futures import ProcessPoolExecutor
+
+    if workers is None:
+        try:
+            workers = max(1, int(os.environ.get("INNOVIZER_PDF_WORKERS", "2")))
+        except ValueError:
+            workers = 2
 
     def cle(p):
         st = os.stat(p)
@@ -130,22 +174,45 @@ def parse_annee(paths: list, cache_dir: str | None = None, workers: int = 4):
         if cache_dir:
             f = os.path.join(cache_dir, cle(p) + ".json")
             if os.path.exists(f):
-                lignes.extend(json.load(open(f))); continue
+                cached = json.load(open(f))
+                if cached:                      # un cache VIDE est ignoré (poison)
+                    lignes.extend(cached); continue
         a_parser.append(p)
 
     if a_parser:
-        with ProcessPoolExecutor(max_workers=workers) as ex:
-            for p, res in zip(a_parser, ex.map(parse_pdf, a_parser)):
-                lignes.extend(res)
-                if cache_dir:
-                    os.makedirs(cache_dir, exist_ok=True)
-                    json.dump(res, open(os.path.join(cache_dir, cle(p) + ".json"), "w"),
-                              ensure_ascii=False)
+        workers = max(1, min(workers, len(a_parser)))
+        try:
+            with ProcessPoolExecutor(max_workers=workers) as ex:
+                resultats = list(ex.map(parse_pdf, a_parser))
+        except Exception:  # noqa: BLE001
+            # Certains conteneurs (quotas, /dev/shm restreint) ne peuvent pas
+            # forker de workers : repli séquentiel, plus lent mais fiable.
+            resultats = [parse_pdf(p) for p in a_parser]
+        for p, res in zip(a_parser, resultats):
+            lignes.extend(res)
+            # On ne met en cache QUE du non-vide : un parsing raté ne doit
+            # jamais empoisonner le volume persistant et figer les builds suivants.
+            if cache_dir and res:
+                os.makedirs(cache_dir, exist_ok=True)
+                json.dump(res, open(os.path.join(cache_dir, cle(p) + ".json"), "w"),
+                          ensure_ascii=False)
     return pd.DataFrame(lignes)
 
 
+#: colonnes du référentiel salariés (substrat people enrichi).
+_COLS_REF = ["person_key", "nom", "matricule", "emploi", "classification",
+             "debut_contrat", "mois_presence", "heures_travaillees",
+             "cout_employeur", "emploi_normalise"]
+
+
 def referentiel_salaries(df):
-    """Une ligne par salarié : identité + poste le plus récent + heures cumulées."""
+    """Une ligne par salarié : identité + poste le plus récent + heures cumulées.
+
+    Robuste à un parsing vide : si aucun bulletin n'a été exploité (format non
+    reconnu, PDF scanné sans couche texte), on renvoie un référentiel vide aux
+    bonnes colonnes plutôt que de planter — l'appelant constate l'absence."""
+    if df is None or not len(df) or "mois" not in df.columns:
+        return pd.DataFrame(columns=_COLS_REF)
     df = df.sort_values("mois")
     g = df.groupby("person_key")
     ref = g.agg(

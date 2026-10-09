@@ -36,3 +36,22 @@ def test_bulletins_seuls_qualifient_le_personnel_sans_paie():
     b.moteur_personnel()                      # ne doit PAS exiger paie_lignes
     assert "qualification" in b.data
     assert len(b.data["qualification"]) == 1
+
+
+def test_referentiel_salaries_vide_ne_plante_pas():
+    """Bulletins non exploités (0 ligne) -> référentiel vide aux bonnes
+    colonnes, jamais KeyError 'mois'."""
+    from innovizer.connectors import bulletins as bul
+    ref = bul.referentiel_salaries(pd.DataFrame([]))
+    assert len(ref) == 0
+    assert "cout_employeur" in ref.columns and "emploi" in ref.columns
+
+
+def test_charger_bulletins_sans_resultat_constate_et_ne_plante_pas():
+    """Motif sans correspondance -> parsing vide : un contrôle BUL-parse est
+    posé, salaries n'est pas peuplé, et la construction continue (paie seule)."""
+    b = _b()
+    b.charger_bulletins("/tmp/aucun_bulletin_*.pdf")   # glob vide -> df vide
+    assert "salaries" not in b.data
+    codes = [c[0]["code"] for c in b.ctrl]
+    assert "BUL-parse" in codes
