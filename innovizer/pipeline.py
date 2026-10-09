@@ -132,11 +132,17 @@ class Brique01:
     def moteur_assiette(self):
         rec = self.data["paie_lignes"]
         cot = eng_assiette.cotisations_par_classe(rec)
-        annexe = eng_assiette.construire_annexe(
-            self.data["paie_agregat"], self.data["salaries"], cot,
-            self.data["bulletins"])
-        self.data.update(cotisations=cot, annexe=annexe,
+        self.data.update(cotisations=cot,
                          classement_cotisations=eng_assiette.synthese_classement(rec))
+        # L'annexe personnel croise le livre de paie ET les bulletins. On ne la
+        # construit que si les deux sources sont là. Avec le livre de paie seul :
+        # cotisations classées, mais pas d'annexe (donc pas de projets, qui s'y
+        # rattachent). Pour l'instant une seule source suffit à construire.
+        if "paie_agregat" in self.data and "salaries" in self.data \
+                and "bulletins" in self.data:
+            self.data["annexe"] = eng_assiette.construire_annexe(
+                self.data["paie_agregat"], self.data["salaries"], cot,
+                self.data["bulletins"])
         return self
 
     def moteur_projets(self, amorce=None):

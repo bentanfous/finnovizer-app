@@ -99,8 +99,13 @@ class Job:
         if self._un("mesr_cir") and self._un("mesr_cii"):
             b.charger_referentiels_mesr(self._un("mesr_cir"), self._un("mesr_cii"))
 
-        if "paie_lignes" in b.data:
+        # Personnel : qualifié depuis les bulletins (emploi + diplôme).
+        if "salaries" in b.data:
             b.moteur_personnel()
+        # Assiette cotisations : depuis le livre de paie. L'annexe (et donc les
+        # projets) n'apparaît que si les bulletins sont aussi présents — mais la
+        # paie seule OU les bulletins seuls suffisent à construire le Data Hub.
+        if "paie_lignes" in b.data:
             b.moteur_assiette()
         if "temps" in b.data and "annexe" in b.data:
             b.moteur_projets(None)
