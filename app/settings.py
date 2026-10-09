@@ -12,7 +12,7 @@ En local, les valeurs par défaut écrivent sous ./data.
 import os
 from pathlib import Path
 
-VERSION = "1.2.0"  # famille IP Box (ventes→revenues, Nexus par actif) + FEC→financial_entries
+VERSION = "1.2.1"  # fix extraction bulletins sur Railway : pypdf 5.9.0 (4.3.1 insérait des espaces parasites)
 
 RAW_DIR = Path(os.environ.get("INNOVIZER_RAW_DIR", "./data/raw_uploads"))
 DERIVED_DIR = Path(os.environ.get("INNOVIZER_DERIVED_DIR", "./data/derived"))
