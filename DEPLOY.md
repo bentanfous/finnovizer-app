@@ -137,6 +137,32 @@ place déjà tout au bon endroit.
 - **Sauvegarde.** Le volume n'est pas sauvegardé automatiquement. Pour un vrai
   dossier client, exporte régulièrement `brique01.xlsx`.
 
+## Vérification post-déploiement (1 coup d'œil)
+
+Une fois le service en ligne, ouvre **`/api/health`**. Il renvoie l'état réel
+du déploiement — la checklist se vérifie là, sans fouiller les logs :
+
+```json
+{
+  "ok": true,
+  "stockage": { "persistant": true, "inscriptible": true, "avertissement": null },
+  "upload_max_mb": 50,
+  "voix_eva": { "configuree": true, "webhook_protege": true }
+}
+```
+
+- `stockage.persistant: false` ou un `avertissement` non nul → le volume n'est
+  pas monté : les dossiers retombent sur `./data` (éphémère), tout est perdu au
+  redéploiement. Monte un volume sur `/data` et définis `INNOVIZER_RAW_DIR` /
+  `INNOVIZER_DERIVED_DIR` (voir §2). Le log de démarrage le signale aussi.
+- `stockage.inscriptible: false` → le volume est monté mais non inscriptible :
+  vérifie le point de montage.
+- `voix_eva.configuree: false` → Eva vocale inactive (normal si tu ne l'utilises
+  pas) ; `webhook_protege: false` → endpoint Vapi ouvert, définis
+  `VAPI_WEBHOOK_SECRET` avant d'activer la voix.
+- `upload_max_mb` → marge large : le livre de paie annuel réel fait ~2,6 Mo,
+  le plus gros fichier observé ~14 Mo, pour un plafond à 50 Mo.
+
 ## ⚠ RGPD — à régler avant toute donnée réelle
 
 L'application stocke paie nominative, CV et diplômes sur le volume Railway.

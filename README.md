@@ -96,3 +96,14 @@ innovizer/      le moteur métier (indépendant du web)
   controls.py   registre des contrôles
   pipeline.py   orchestrateur Brique 01
 ```
+
+## Eva vocale (Brique 03)
+
+Entretien d'audit en voix naturelle, architecture B : **Vapi gère la voix, le
+moteur Eva pilote l'entretien** via un webhook custom-LLM. Même logique métier
+que le mode texte, piste d'audit côté serveur, coût LLM quasi nul (conduite
+déterministe). Détail, configuration Vapi et coûts : `docs/eva-voice.md`.
+Prompt système de l'assistant : `docs/eva-system-prompt.txt`.
+
+Sans clés Vapi, le bouton voix le signale et l'entretien texte reste le mode
+de test par défaut.

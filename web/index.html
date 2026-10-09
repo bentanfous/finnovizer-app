@@ -125,6 +125,13 @@
       <h2>Qualification du personnel</h2>
       <div id="qual"></div>
     </div>
+    <div class="panel hide" id="ipboxpanel">
+      <h2>IP Box — ratio Nexus</h2>
+      <p class="sub">Numérateur R&D relu du substrat partagé ; les arbitrages de
+        conseil (résultat net, dépenses totales, rattachement des recettes)
+        sortent en TO_REVIEW tant qu'ils ne sont pas fournis.</p>
+      <div id="ipbox"></div>
+    </div>
     <div class="row"><button id="toscr">Voir le screening projets →</button></div>
   </section>
 
@@ -150,8 +157,10 @@
           <option value="MIXTE">Mixte</option>
         </select>
         <input type="text" id="interlo" placeholder="Interlocuteur (ex. Directeur technique)">
-        <button id="starteva">Démarrer l'entretien</button>
+        <button id="starteva">Démarrer (texte)</button>
+        <button id="startvoice" class="ghost">🎙 Démarrer en voix</button>
       </div>
+      <div id="voicestatus" class="note hide"></div>
       <div class="cov" id="cov"></div>
       <div class="eva hide" id="chat"></div>
       <div class="row hide" id="answerbox">
@@ -179,6 +188,8 @@ const CATS=[
   ["temps","Suivi des temps (.xlsx)"],["fournisseurs","Fournisseurs (compta)"],
   ["immobilisations","Immobilisations"],["cv_diplomes","CV & diplômes (.pdf)"],
   ["mesr_cir","Référentiel MESR CIR"],["mesr_cii","Référentiel MESR CII"],
+  ["ventes","Ventes / produits 7xx (IP Box)"],["fec","FEC (écritures compta)"],
+  ["actifs","Actifs incorporels déclarés"],
 ];
 
 function step(n){$$(".steps .step").forEach(s=>s.classList.toggle("on",+s.dataset.s===n));
@@ -256,6 +267,33 @@ function renderHub(h){
       ([s,n])=>`<span class="tag ${s.startsWith("ELIGIBLE")?"t-ok":
         s==="NON_RD_FUNCTION"?"t-dim":"t-warn"}">${s} · ${n}</span>`).join(" ")+"</div>";
   }
+  renderIpBox(h);
+}
+
+function renderIpBox(h){
+  const panel=$("#ipboxpanel"), box=$("#ipbox");
+  if(!h.ip_box && !h.ip_box_actifs){panel.classList.add("hide"); return;}
+  panel.classList.remove("hide");
+  let html="";
+  if(h.ip_box){
+    html+="<h3 class='sub'>Firm-level</h3><table class='mini'><tbody>"+
+      h.ip_box.map(r=>`<tr><td>${r.indicateur}</td>
+        <td class="num">${r.valeur!=null?(typeof r.valeur==="number"&&r.valeur>1?eur(r.valeur):r.valeur):"—"}</td>
+        <td>${tag(r.statut)}</td></tr>`).join("")+"</tbody></table>";
+  }
+  if(h.ip_box_actifs){
+    html+="<h3 class='sub' style='margin-top:14px'>Par actif</h3>"+
+      "<table class='mini'><thead><tr><th>Actif</th><th>R&D éligible</th>"+
+      "<th>Recettes</th><th>Ratio Nexus</th><th>Base 10%</th><th>Économie</th><th></th></tr></thead><tbody>"+
+      h.ip_box_actifs.map(r=>`<tr><td class="h">${r.actif}</td>
+        <td class="num">${eur(r.cout_rd_eligible)}</td>
+        <td class="num">${eur(r.recettes)}</td>
+        <td class="num">${r.ratio_nexus!=null?r.ratio_nexus:"—"}</td>
+        <td class="num">${r.base_10!=null?eur(r.base_10):"—"}</td>
+        <td class="num">${r.economie!=null?eur(r.economie):"—"}</td>
+        <td>${tag(r.statut)}</td></tr>`).join("")+"</tbody></table>";
+  }
+  box.innerHTML=html;
 }
 
 $("#toscr").onclick=async()=>{await loadProjects();step(2);};
@@ -291,6 +329,41 @@ $("#starteva").onclick=async()=>{
   addMsg("eva",r.ouverture);
   addMsg("eva",r.question.question,r.question.axe+" · "+r.question.nature);
   $("#answer").focus();
+};
+
+// --- Eva en voix (Vapi) : Vapi = voix, le backend pilote l'entretien ---
+let VAPI=null;
+async function loadVapi(){
+  if(window.Vapi) return;
+  await new Promise((ok,ko)=>{const s=document.createElement("script");
+    s.src="https://cdn.jsdelivr.net/npm/@vapi-ai/web@latest/dist/index.js";
+    s.onload=ok;s.onerror=ko;document.head.appendChild(s);});
+}
+$("#startvoice").onclick=async()=>{
+  const st=$("#voicestatus");st.classList.remove("hide");
+  const cfg=await api("/api/voice/config");
+  if(!cfg.enabled){st.textContent="Voix non configurée : renseigne VAPI_PUBLIC_KEY et VAPI_ASSISTANT_ID côté serveur. L'entretien texte reste disponible.";return;}
+  st.textContent="Connexion vocale…";
+  // 1) ouvrir l'entretien côté backend → interview_id
+  const r=await api(`/api/jobs/${JOB}/interviews/voice`,{method:"POST",
+    headers:{"content-type":"application/json"},
+    body:JSON.stringify({code_projet:CURRENT,regime:$("#regime").value,
+      interlocuteur:$("#interlo").value})});
+  EVA=r.id;
+  // 2) démarrer Vapi en passant interview_id en variable dynamique
+  try{
+    await loadVapi();
+    VAPI=new window.Vapi(cfg.public_key);
+    VAPI.on("message",m=>{ if(m.type==="transcript"&&m.transcriptType==="final")
+      addMsg(m.role==="assistant"?"eva":"cto",m.transcript); });
+    VAPI.on("call-end",()=>{st.textContent="Entretien vocal terminé. Finalise le pré-audit pour générer la fiche.";});
+    VAPI.on("error",e=>{st.textContent="Erreur vocale : "+(e?.message||e)+". Bascule sur l'entretien texte.";});
+    await VAPI.start(cfg.assistant_id,{variableValues:{interview_id:EVA,
+      project_name:CURRENT}});
+    $("#chat").classList.remove("hide");$("#answerbtns").classList.remove("hide");
+    $("#chat").innerHTML="";
+    st.textContent="🎙 En ligne avec Eva. Parlez. (Finalisez le pré-audit à la fin.)";
+  }catch(e){st.textContent="Impossible de démarrer la voix : "+e+". Utilisez l'entretien texte.";}
 };
 
 function addMsg(who,txt,meta){

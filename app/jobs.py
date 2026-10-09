@@ -22,13 +22,14 @@ from pathlib import Path
 import pandas as pd
 
 from .settings import RAW_DIR, DERIVED_DIR
-from innovizer import config, identity
+from innovizer import config
+from innovizer.core import identity
 from innovizer.pipeline import Brique01
-from innovizer.engines import fiche_projet as fp
+from innovizer.engines.fiscalite_recherche import fiche_projet as fp
 from innovizer.brique03.interview import Entretien
 
 CATEGORIES = ["paie", "bulletins", "temps", "fournisseurs", "immobilisations",
-              "cv_diplomes", "mesr_cir", "mesr_cii"]
+              "cv_diplomes", "mesr_cir", "mesr_cii", "ventes", "fec", "actifs"]
 
 
 def _now():
@@ -108,6 +109,13 @@ class Job:
             if f is not None:
                 b.moteur_soustraitance(f)
 
+        # famille IP Box
+        if list((self.raw / "ventes").glob("*")):
+            b.charger_ventes(self._glob("ventes"))
+        if list((self.raw / "fec").glob("*")):
+            b.charger_fec(self._glob("fec"))
+        self._construire_ip_box(b, (arbitrages or {}).get("ip_box", {}))
+
         self._b01 = b
         resume = self._resumer(b)
         (self.derived / "data_hub.json").write_text(
@@ -118,6 +126,54 @@ class Job:
         except Exception:  # noqa: BLE001
             pass
         return resume
+
+    def _construire_ip_box(self, b, cfg: dict):
+        """IP Box : synthèse firm-level dès que des ventes sont présentes ;
+        synthèse par actif si un fichier `actifs` et une table projet→actif
+        sont fournis. Les arbitrages (résultat net, dénominateur, attribution
+        des recettes) viennent de la config `ip_box` du corps de build —
+        jamais présumés : sans eux, la synthèse sort en TO_REVIEW."""
+        if "revenues" not in b.data:
+            return
+        # firm-level (toujours)
+        try:
+            b.moteur_ip_box(
+                resultat_net_ip=cfg.get("resultat_net_ip"),
+                depenses_totales=cfg.get("depenses_totales"))
+        except Exception:  # noqa: BLE001
+            pass
+        # par actif (si référentiel + mapping projets fournis)
+        actifs = self._lire_actifs()
+        map_projets = cfg.get("map_projets") or {}
+        if actifs is not None and len(actifs) and map_projets and "qualification" in b.data:
+            try:
+                b.moteur_ip_box_actifs(
+                    actifs, map_projets,
+                    recettes_explicites=cfg.get("recettes_explicites"),
+                    map_recettes_lignes=cfg.get("map_recettes_lignes"),
+                    depenses_totales_par_actif=cfg.get("depenses_totales_par_actif"),
+                    resultat_net_par_actif=cfg.get("resultat_net_par_actif"))
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _lire_actifs(self):
+        """Référentiel des actifs incorporels déclarés : colonnes actif_id,
+        libelle (le reste est ignoré). Pas de fichier -> None."""
+        p = self._un("actifs")
+        if not p:
+            return None
+        try:
+            df = pd.read_excel(p) if p.endswith((".xlsx", ".xls")) \
+                else pd.read_csv(p, sep=None, engine="python")
+        except Exception:  # noqa: BLE001
+            return None
+        cols = {c.lower().strip(): c for c in df.columns}
+        cid = next((cols[k] for k in cols if "id" in k or "actif" in k or "ref" in k),
+                   df.columns[0])
+        clib = next((cols[k] for k in cols if "lib" in k or "nom" in k or "designation" in k),
+                    df.columns[-1])
+        return pd.DataFrame({"actif_id": df[cid].astype(str),
+                             "libelle": df[clib].astype(str)})
 
     def _lire_fournisseurs(self):
         p = self._un("fournisseurs")
@@ -164,6 +220,14 @@ class Job:
                 a_verifier=int(f.a_verifier_mesr.sum()) if "a_verifier_mesr" in f else 0,
                 approuves_cir=int((f.get("statut_cir") == "APPROVED").sum())
                 if "statut_cir" in f else 0)
+        if "revenues_par_nature" in d:
+            r["revenues"] = d["revenues_par_nature"].to_dict("records")
+        if "ip_box" in d:
+            r["ip_box"] = d["ip_box"].to_dict("records")
+        if "ip_box_actifs" in d:
+            r["ip_box_actifs"] = d["ip_box_actifs"].to_dict("records")
+        if "pools_charges" in d:
+            r["pools_charges"] = d["pools_charges"].to_dict("records")
         try:
             c = b.controles()
             r["controles"] = c[["code", "libelle", "statut", "calcule", "attendu"]].to_dict("records")
@@ -194,18 +258,34 @@ class Job:
 
     # ------------------------------------------------------------- eva
 
-    def ouvrir_entretien(self, code_projet: str, regime="A_DETERMINER",
-                         interlocuteur="") -> dict:
+    def _nouvel_entretien(self, code_projet, regime, interlocuteur) -> Entretien:
         alias = config.Dossier(client=self.id, exercice=self.exercice).alias_personnes
         ctx = fp.contexte_depuis_brique01(code_projet, self._b01.data, alias)
         fiche = fp.FicheProjet(contexte=ctx)
         fiche.investigation.regime_pressenti = regime
-        projets = self._b01.data["temps"].code_projet.unique().tolist()
+        projets = [p for p in self._b01.data["temps"].code_projet.unique().tolist()
+                   if isinstance(p, str)]
         e = Entretien(fiche, projets_connus=projets, interlocuteur=interlocuteur)
         self._entretiens[e.id] = e
+        return e
+
+    def ouvrir_entretien(self, code_projet: str, regime="A_DETERMINER",
+                         interlocuteur="") -> dict:
+        """Mode TEXTE : consomme la première question pour l'afficher."""
+        e = self._nouvel_entretien(code_projet, regime, interlocuteur)
         t = e.prochaine_question()
         from dataclasses import asdict
         return dict(id=e.id, ouverture=e.ouverture(), question=asdict(t))
+
+    def ouvrir_entretien_vocal(self, code_projet: str, regime="A_DETERMINER",
+                               interlocuteur="") -> dict:
+        """Mode VOIX : crée l'entretien, l'enregistre dans le pont Vapi SANS
+        consommer la première question (Vapi la déclenchera au premier appel
+        du webhook). Renvoie l'interview_id à passer en variable dynamique."""
+        from innovizer.brique03.voice import BRIDGE
+        e = self._nouvel_entretien(code_projet, regime, interlocuteur)
+        BRIDGE._sessions[e.id] = e
+        return dict(id=e.id, code_projet=code_projet, regime=regime)
 
     def repondre(self, entretien_id: str, reponse: str) -> dict:
         from dataclasses import asdict

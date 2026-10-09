@@ -36,9 +36,13 @@ from pathlib import Path
 import glob as _glob
 import pandas as pd
 
-from . import config, identity, controls, evidence
-from .ingest import paie as ing_paie, bulletins as ing_bul, temps as ing_tps
-from .engines import people, assiette as eng_assiette, screening, subcontracting
+from . import config
+from .core import identity, controls, evidence
+from .connectors import (paie as ing_paie, bulletins as ing_bul,
+                         temps as ing_tps, ventes as ing_ventes, fec as ing_fec)
+from .engines.fiscalite_recherche import (assiette as eng_assiette, screening,
+                                           subcontracting, qualification as people)
+from .engines.ip_box import nexus as eng_nexus, attribution as eng_attr
 
 
 class Brique01:
@@ -48,11 +52,29 @@ class Brique01:
         self.data = {}
         self.ctrl = []
 
+    # ---------------------------------------------------------- substrat
+
+    def _substrat(self, nom: str, df):
+        """Point de passage obligé : valide la sortie d'un connecteur contre
+        le schéma de l'entité (innovizer.models) avant que les moteurs la
+        lisent. Non bloquant : une non-conformité devient un contrôle ECART,
+        le Data Hub se construit quand même et signale."""
+        from . import models as _m
+        try:
+            _m.SUBSTRAT[nom].validate(df)
+            statut, detail = "OK", ""
+        except _m.SchemaError as e:
+            statut, detail = "ECART", str(e)
+        self.ctrl.append([dict(code=f"SUB-{nom}", libelle=f"conformité substrat {nom}",
+                               attendu="conforme", calcule=statut, ecart=None,
+                               statut=statut, detail=detail)])
+        return df
+
     # ---------------------------------------------------------- ingestion
 
     def charger_paie(self, chemin):
         df = ing_paie.sectionner(ing_paie.load(chemin))
-        rec = ing_paie.payroll_records(df)
+        rec = self._substrat("payroll", ing_paie.payroll_records(df))
         agg = ing_paie.agregat_annuel(rec)
         self.data.update(paie_brut=df, paie_lignes=rec, paie_agregat=agg)
         self.ctrl.append(controls.reconciliation_paie(df, rec, agg))
@@ -61,7 +83,7 @@ class Brique01:
 
     def charger_bulletins(self, motif):
         b = ing_bul.parse_annee(_glob.glob(motif), cache_dir=self.cache_dir)
-        ref = ing_bul.referentiel_salaries(b)
+        ref = self._substrat("people", ing_bul.referentiel_salaries(b))
         self.data.update(bulletins=b, salaries=ref)
         if "paie_agregat" in self.data:
             self.ctrl.append(controls.couverture_bulletins(
@@ -70,8 +92,24 @@ class Brique01:
 
     def charger_temps(self, motif):
         ing_tps.HEURES_PAR_JOUR = self.d.heures_par_jour
-        tt = ing_tps.charger(_glob.glob(motif))
+        tt = self._substrat("time_entries", ing_tps.charger(_glob.glob(motif)))
         self.data["temps"] = tt
+        return self
+
+    def charger_ventes(self, motif):
+        """Famille IP Box : ingère un ou plusieurs exports de ventes (7xx) et
+        passe par le substrat `revenues` avant tout calcul Nexus."""
+        rec = self._substrat("revenues", ing_ventes.charger(_glob.glob(motif)))
+        self.data.update(revenues=rec,
+                         revenues_par_nature=ing_ventes.agregat_par_nature(rec))
+        return self
+
+    def charger_fec(self, motif):
+        """Ingère un ou plusieurs FEC et passe par le substrat
+        `financial_entries` avant tout cadrage. Les pools de charges 6x/68x
+        servent le dénominateur IP Box et la future famille Social."""
+        rec = self._substrat("financial_entries", ing_fec.charger(_glob.glob(motif)))
+        self.data.update(fec=rec, pools_charges=ing_fec.pools_par_classe(rec))
         return self
 
     def charger_referentiels_mesr(self, chemin_cir, chemin_cii):
@@ -121,8 +159,56 @@ class Brique01:
         self.ctrl.append(controls.coherence_temps(q, keys))
         return self
 
+    def moteur_ip_box(self, resultat_net_ip=None, depenses_totales=None):
+        """Synthèse IP Box : relit le substrat partagé (people × qualification
+        pour le numérateur Nexus, revenues pour les recettes 751) et calcule
+        ce que les arbitrages fournis permettent. Sans moteur_personnel au
+        préalable, la qualification est absente et le numérateur vaut 0 —
+        constaté, jamais présumé."""
+        self.data["ip_box"] = eng_nexus.synthese(
+            self.data.get("revenues"),
+            self.data.get("salaries"),
+            self.data.get("qualification"),
+            resultat_net_ip=resultat_net_ip,
+            depenses_totales=depenses_totales)
+        return self
+
+    def moteur_ip_box_actifs(self, actifs, map_projets, *,
+                             recettes_explicites=None, map_recettes_lignes=None,
+                             depenses_totales_par_actif=None,
+                             resultat_net_par_actif=None):
+        """Synthèse IP Box PAR ACTIF. Réutilise le substrat partagé pour la
+        R&D (temps × quotités × coût × qualification, réparti projet→actif) ;
+        l'attribution des recettes et les dénominateurs/résultats nets restent
+        des arbitrages de conseil. Ce qui n'est pas rattaché sort en TO_REVIEW
+        et les projets non mappés sont constatés (contrôle IPB-actifs)."""
+        cle = lambda n: identity.cle_personne(n, self.d.alias_personnes)
+        cout = eng_attr.cout_eligible_par_personne(
+            self.data["salaries"], self.data["qualification"], cle)
+        rd = eng_attr.rd_eligible_par_actif(
+            self.data["temps"], cout, map_projets)
+        rec = eng_attr.recettes_par_actif(
+            self.data.get("revenues"), explicites=recettes_explicites,
+            map_lignes=map_recettes_lignes)
+        actifs_df = actifs if isinstance(actifs, pd.DataFrame) else pd.DataFrame(actifs)
+        synth = eng_attr.synthese_par_actif(
+            actifs_df, rd["par_actif"], rec,
+            depenses_totales=depenses_totales_par_actif,
+            resultat_net=resultat_net_par_actif)
+        self.data.update(ip_box_actifs=synth, ip_box_rd_detail=rd["detail"])
+
+        nm = rd["projets_non_mappes"]
+        self.ctrl.append([dict(
+            code="IPB-actifs", libelle="rattachement projets→actifs IP Box",
+            attendu="tous les projets R&D mappés",
+            calcule=f"{len(nm)} projet(s) non mappé(s)",
+            ecart=len(nm),
+            statut="OK" if not nm else "A_ARBITRER",
+            detail="; ".join(nm))])
+        return self
+
     def moteur_soustraitance(self, fournisseurs: pd.DataFrame):
-        s = subcontracting.screening_fournisseurs(fournisseurs)
+        s = self._substrat("suppliers", subcontracting.screening_fournisseurs(fournisseurs))
         s["siren_norm"] = s.siren.map(identity.cle_siren).astype("string")
         cir, cii = self.data.get("mesr_cir"), self.data.get("mesr_cii")
         s[["statut_cir", "statut_cii"]] = s.siren_norm.apply(
@@ -148,7 +234,7 @@ class Brique01:
         return tuple(res)
 
     def moteur_preuves(self, pieces: list):
-        reg = evidence.registre(pieces)
+        reg = self._substrat("documents", evidence.registre(pieces))
         self.data["documents"] = reg
         q = self.data.get("qualification")
         if q is not None:
@@ -175,6 +261,10 @@ class Brique01:
             "Fournisseurs": self.data.get("fournisseurs"),
             "Documents": self.data.get("documents"),
             "Couverture preuves": self.data.get("couverture_preuves"),
+            "Revenues par nature": self.data.get("revenues_par_nature"),
+            "IP Box Nexus": self.data.get("ip_box"),
+            "IP Box par actif": self.data.get("ip_box_actifs"),
+            "Pools charges FEC": self.data.get("pools_charges"),
         }
         Path(chemin).parent.mkdir(parents=True, exist_ok=True)
         with pd.ExcelWriter(chemin, engine="openpyxl") as w:

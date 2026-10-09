@@ -25,7 +25,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 import uuid
 
-from ..engines import fiche_projet as fp
+from ..engines.fiscalite_recherche import fiche_projet as fp
 from . import questions as Q
 from .classifier import ClassifieurRegles
 

@@ -3,7 +3,7 @@
 import json
 import pytest
 
-from innovizer.engines import fiche_projet as fp
+from innovizer.engines.fiscalite_recherche import fiche_projet as fp
 from innovizer.brique03 import questions as Q
 from innovizer.brique03.classifier import ClassifieurRegles, ClassifieurLLM
 from innovizer.brique03.interview import Entretien, MAX_TOURS

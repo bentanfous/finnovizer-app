@@ -40,7 +40,8 @@ _INTERVIEW_JOB: dict[str, str] = {}
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "version": VERSION, "jobs": len(STORE.lister())}
+    from .settings import runtime_status
+    return {"ok": True, "jobs": len(STORE.lister()), **runtime_status()}
 
 
 class CreerJob(BaseModel):
@@ -109,6 +110,22 @@ def hub(jid: str):
     return json.loads(p.read_text())
 
 
+@app.get("/api/jobs/{jid}/ipbox")
+def ipbox(jid: str):
+    """Synthèse IP Box (firm-level + par actif si disponible). Les arbitrages
+    se passent au build via body.arbitrages.ip_box (résultat net, dénominateur,
+    map_projets, attribution des recettes)."""
+    p = DERIVED_DIR / jid / "data_hub.json"
+    if not p.exists():
+        raise HTTPException(404, "Data Hub non construit — appeler /build")
+    import json
+    d = json.loads(p.read_text())
+    if "ip_box" not in d and "ip_box_actifs" not in d:
+        raise HTTPException(404, "IP Box non calculé — charger des ventes (7xx)")
+    return {k: d[k] for k in ("ip_box", "ip_box_actifs", "revenues", "pools_charges")
+            if k in d}
+
+
 @app.get("/api/jobs/{jid}/projects")
 def projects(jid: str):
     try:
@@ -173,6 +190,46 @@ def export(jid: str):
     if not p.exists():
         raise HTTPException(404, "export indisponible — construire le Data Hub")
     return FileResponse(p, filename=f"innovizer_{jid}.xlsx")
+
+
+# ------------------------------------------------------------ Eva vocale (Vapi)
+
+from .settings import eva_voice_config, VAPI_WEBHOOK_SECRET  # noqa: E402
+from fastapi import Request  # noqa: E402
+
+
+@app.get("/api/voice/config")
+def voice_config():
+    """Config publique pour initialiser le widget Vapi côté frontend."""
+    return eva_voice_config()
+
+
+@app.post("/api/jobs/{jid}/interviews/voice")
+def ouvrir_voix(jid: str, body: OuvrirEntretien):
+    """Ouvre un entretien vocal et renvoie l'interview_id à passer à Vapi
+    en variable dynamique (assistantOverrides.variableValues.interview_id)."""
+    j = STORE.get(jid)
+    if j._b01 is None:
+        j.construire_data_hub()
+    res = j.ouvrir_entretien_voix(body.code_projet, body.regime, body.interlocuteur) \
+        if hasattr(j, "ouvrir_entretien_voix") else \
+        j.ouvrir_entretien_vocal(body.code_projet, body.regime, body.interlocuteur)
+    _INTERVIEW_JOB[res["id"]] = jid
+    return res
+
+
+@app.post("/api/vapi/chat/completions")
+async def vapi_custom_llm(request: Request):
+    """Webhook « custom LLM » appelé par Vapi à chaque tour de parole.
+    Vapi = voix ; la question suivante est décidée par le moteur Eva.
+    Réponse compatible OpenAI chat/completions (non-stream)."""
+    if VAPI_WEBHOOK_SECRET:
+        got = request.headers.get("x-vapi-secret") or request.headers.get("authorization", "")
+        if VAPI_WEBHOOK_SECRET not in got:
+            raise HTTPException(401, "webhook non authentifié")
+    from innovizer.brique03.voice import BRIDGE
+    payload = await request.json()
+    return BRIDGE.handle_chat_completion(payload)
 
 
 # ------------------------------------------------------------ frontend
