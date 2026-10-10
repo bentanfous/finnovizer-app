@@ -235,10 +235,54 @@ class Brique01:
         s = self._substrat("suppliers", subcontracting.screening_fournisseurs(fournisseurs))
         s["siren_norm"] = s.siren.map(identity.cle_siren).astype("string")
         cir, cii = self.data.get("mesr_cir"), self.data.get("mesr_cii")
+        # 1) rapprochement AUTORITAIRE par SIREN
         s[["statut_cir", "statut_cii"]] = s.siren_norm.apply(
             lambda x: pd.Series(self._verifier(x, cir, cii)))
+        # 2) rapprochement INDICATIF par nom (candidat à confirmer par SIREN),
+        #    sur les seuls fournisseurs à vérifier au MESR, pour établir la liste
+        #    de candidats agréés même quand l'extrait comptable n'a pas le SIREN.
+        idx_cir = subcontracting.indexer_referentiel(cir)
+        idx_cii = subcontracting.indexer_referentiel(cii)
+        an = self.d.exercice
+
+        def _candidat(row):
+            if not row.a_verifier_mesr:
+                return pd.Series(["", "", "", False])
+            for disp, idx in (("CIR", idx_cir), ("CII", idx_cii)):
+                cand = subcontracting.candidat_par_nom(row.libelle, idx, an)
+                if cand:
+                    return pd.Series([disp, cand["siren_mesr"], cand["periode"],
+                                      cand["couvre_annee"]])
+            return pd.Series(["", "", "", False])
+
+        s[["candidat_mesr", "siren_mesr", "periode_agrement",
+           "candidat_couvre"]] = s.apply(_candidat, axis=1)
+        s["agrement"] = s.apply(lambda r: self._conclusion_agrement(r, an), axis=1)
         self.data["fournisseurs"] = s
         return self
+
+    @staticmethod
+    def _conclusion_agrement(r, annee) -> str:
+        """Libellé lisible de la conclusion d'agrément, du plus fort au plus
+        faible : SIREN confirmé > candidat par nom > rien."""
+        if r.get("statut_cir") == "APPROVED":
+            return f"AGRÉÉ CIR {annee} (SIREN confirmé)"
+        if r.get("statut_cii") == "APPROVED":
+            return f"AGRÉÉ CII {annee} (SIREN confirmé)"
+        if r.get("candidat_mesr"):
+            periode = str(r.get("periode_agrement", ""))
+            siren = r.get("siren_mesr", "")
+            disp = r["candidat_mesr"]
+            if r.get("candidat_couvre"):
+                return (f"CANDIDAT AGRÉÉ {disp} {annee} (nom trouvé au MESR, "
+                        f"SIREN {siren} à confirmer · agréé {periode})")
+            return (f"CANDIDAT {disp} — nom au MESR mais agrément {periode} "
+                    f"ne couvre pas {annee} (SIREN {siren} à confirmer)")
+        if "FOUND_NOT_VALID_FOR_YEAR" in (r.get("statut_cir"), r.get("statut_cii")):
+            return f"AGRÉMENT HORS EXERCICE {annee} (SIREN trouvé)"
+        if r.get("statut_cir") == "NO_SIREN":
+            return "SIREN absent — vérification impossible"
+        return "non trouvé au référentiel"
 
     def _verifier(self, siren, cir, cii):
         # pd.NA n'est pas évaluable en booléen : tester explicitement

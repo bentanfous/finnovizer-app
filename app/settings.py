@@ -12,7 +12,7 @@ En local, les valeurs par défaut écrivent sous ./data.
 import os
 from pathlib import Path
 
-VERSION = "1.2.1"  # fix extraction bulletins sur Railway : pypdf 5.9.0 (4.3.1 insérait des espaces parasites)
+VERSION = "1.4.0"  # connecteur factures : valorisation HT + backfill SIREN (agrément confirme)
 
 RAW_DIR = Path(os.environ.get("INNOVIZER_RAW_DIR", "./data/raw_uploads"))
 DERIVED_DIR = Path(os.environ.get("INNOVIZER_DERIVED_DIR", "./data/derived"))

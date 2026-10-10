@@ -28,8 +28,9 @@ from innovizer.pipeline import Brique01
 from innovizer.engines.fiscalite_recherche import fiche_projet as fp
 from innovizer.brique03.interview import Entretien
 
-CATEGORIES = ["paie", "bulletins", "temps", "fournisseurs", "immobilisations",
-              "cv_diplomes", "mesr_cir", "mesr_cii", "ventes", "fec", "actifs"]
+CATEGORIES = ["paie", "bulletins", "temps", "fournisseurs", "factures",
+              "immobilisations", "cv_diplomes", "mesr_cir", "mesr_cii",
+              "ventes", "fec", "actifs"]
 
 
 def _now():
@@ -112,6 +113,9 @@ class Job:
         if self._un("fournisseurs"):
             f = self._lire_fournisseurs()
             if f is not None:
+                fac = self._agreger_factures()
+                if fac is not None and len(fac):
+                    f = self._enrichir_par_factures(f, fac)
                 b.moteur_soustraitance(f)
 
         # famille IP Box
@@ -180,6 +184,39 @@ class Job:
         return pd.DataFrame({"actif_id": df[cid].astype(str),
                              "libelle": df[clib].astype(str)})
 
+    def _agreger_factures(self):
+        """Lit les factures PDF uploadées et agrège le HT + SIREN par
+        fournisseur. None s'il n'y a pas de factures."""
+        pdfs = list((self.raw / "factures").glob("*.pdf"))
+        if not pdfs:
+            return None
+        from innovizer.connectors import factures
+        try:
+            return factures.agreger_par_fournisseur(
+                factures.charger([str(p) for p in pdfs]))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _enrichir_par_factures(self, fournisseurs, agg):
+        """Rattache les factures à la balance : montant HT valorisé + backfill
+        du SIREN (que la balance ne porte pas). Appariement par raison sociale
+        normalisée ; le SIREN de la facture rend le rapprochement MESR
+        autoritaire (plus seulement candidat par nom)."""
+        from innovizer.engines.fiscalite_recherche.subcontracting import normaliser_nom
+        agg = agg.copy()
+        agg["_cle"] = agg.fournisseur.map(normaliser_nom)
+        ht = dict(zip(agg._cle, agg.montant_ht))
+        sir = dict(zip(agg._cle, agg.siren))
+        f = fournisseurs.copy()
+        cle = f.libelle.map(normaliser_nom)
+        f["montant"] = cle.map(ht)
+        # backfill SIREN uniquement là où la balance n'en a pas
+        sinon = cle.map(sir)
+        if "siren" not in f:
+            f["siren"] = None
+        f["siren"] = f.siren.where(f.siren.notna() & (f.siren.astype(str) != ""), sinon)
+        return f
+
     def _lire_fournisseurs(self):
         p = self._un("fournisseurs")
         try:
@@ -190,10 +227,19 @@ class Job:
         except Exception:  # noqa: BLE001
             return None
         cols = {c.lower(): c for c in df.columns}
-        lib = next((cols[k] for k in cols if "lib" in k or "nom" in k or "fourni" in k), df.columns[-1])
+        lib = next((cols[k] for k in cols if "lib" in k or "nom" in k or "fourni" in k
+                    or "tiers" in k or "raison" in k), df.columns[-1])
         out = pd.DataFrame({"libelle": df[lib].astype(str)})
         sir = next((cols[k] for k in cols if "siren" in k or "siret" in k), None)
         out["siren"] = df[sir].astype(str) if sir else None
+        # montant si l'extrait en porte un (total, HT, débit, solde fournisseur)
+        mnt = next((cols[k] for k in cols
+                    if "montant" in k or k.strip() in ("ht", "total", "debit", "débit", "solde")
+                    or "ht" == k or "total" in k), None)
+        if mnt:
+            out["montant"] = pd.to_numeric(
+                df[mnt].astype(str).str.replace(r"[^\d,.\-]", "", regex=True)
+                .str.replace(",", ".", regex=False), errors="coerce")
         return out
 
     def _resumer(self, b: Brique01) -> dict:
@@ -220,11 +266,19 @@ class Job:
                 a_instruire=int((s.statut_screening == "A_INSTRUIRE").sum()))
         if "fournisseurs" in d:
             f = d["fournisseurs"]
+            agree = f[f.agrement.str.startswith(("AGRÉÉ", "CANDIDAT"))] \
+                if "agrement" in f else f.iloc[0:0]
             r["fournisseurs"] = dict(
                 total=int(len(f)),
                 a_verifier=int(f.a_verifier_mesr.sum()) if "a_verifier_mesr" in f else 0,
                 approuves_cir=int((f.get("statut_cir") == "APPROVED").sum())
-                if "statut_cir" in f else 0)
+                if "statut_cir" in f else 0,
+                agrees=int(len(agree)))
+            # détail affichable : les fournisseurs à vérifier + tout agrément trouvé
+            cols = [c for c in ["libelle", "categorie", "agrement", "montant_annuel",
+                                "siren_mesr", "periode_agrement"] if c in f]
+            vis = f[f.a_verifier_mesr | f.index.isin(agree.index)] if "a_verifier_mesr" in f else f
+            r["fournisseurs_detail"] = vis[cols].head(100).to_dict("records")
         if "revenues_par_nature" in d:
             r["revenues"] = d["revenues_par_nature"].to_dict("records")
         if "ip_box" in d:

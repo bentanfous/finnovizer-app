@@ -125,6 +125,13 @@
       <h2>Qualification du personnel</h2>
       <div id="qual"></div>
     </div>
+    <div class="panel hide" id="fournpanel">
+      <h2>Sous-traitance — organismes agréés CIR/CII</h2>
+      <p class="sub">Clé autoritaire = SIREN. À défaut de SIREN dans l'extrait,
+        rapprochement INDICATIF par nom contre le référentiel MESR (candidat à
+        confirmer par le SIREN et la décision d'agrément).</p>
+      <div id="fourn"></div>
+    </div>
     <div class="panel hide" id="ipboxpanel">
       <h2>IP Box — ratio Nexus</h2>
       <p class="sub">Numérateur R&D relu du substrat partagé ; les arbitrages de
@@ -185,7 +192,8 @@ const eur=n=>fmt(n)+" €";
 
 const CATS=[
   ["paie","Livre de paie (.xlsx)"],["bulletins","Bulletins de paie (.pdf)"],
-  ["temps","Suivi des temps (.xlsx)"],["fournisseurs","Fournisseurs (compta)"],
+  ["temps","Suivi des temps (.xlsx)"],["fournisseurs","Balance fournisseurs (compta)"],
+  ["factures","Factures fournisseurs (.pdf)"],
   ["immobilisations","Immobilisations"],["cv_diplomes","CV & diplômes (.pdf)"],
   ["mesr_cir","Référentiel MESR CIR"],["mesr_cii","Référentiel MESR CII"],
   ["ventes","Ventes / produits 7xx (IP Box)"],["fec","FEC (écritures compta)"],
@@ -257,6 +265,7 @@ function renderHub(h){
   if(h.cotisations?.ELIGIBLE!=null)k.push(["Cotis. éligibles",eur(h.cotisations.ELIGIBLE)]);
   if(h.projets)k.push(["Projets à instruire",fmt(h.projets.a_instruire)]);
   if(h.fournisseurs)k.push(["Fournisseurs à vérifier",fmt(h.fournisseurs.a_verifier)]);
+  if(h.fournisseurs?.agrees)k.push(["Agréés / candidats",fmt(h.fournisseurs.agrees)]);
   $("#kpis").innerHTML=k.map(([l,n])=>`<div class="b"><div class="n">${n}</div>
     <div class="l">${l}</div></div>`).join("");
   $("#ctrls tbody").innerHTML=(h.controles||[]).map(c=>`<tr>
@@ -267,7 +276,32 @@ function renderHub(h){
       ([s,n])=>`<span class="tag ${s.startsWith("ELIGIBLE")?"t-ok":
         s==="NON_RD_FUNCTION"?"t-dim":"t-warn"}">${s} · ${n}</span>`).join(" ")+"</div>";
   }
+  renderFournisseurs(h);
   renderIpBox(h);
+}
+
+function renderFournisseurs(h){
+  const panel=$("#fournpanel"), box=$("#fourn");
+  const rows=h.fournisseurs_detail;
+  if(!rows||!rows.length){panel.classList.add("hide"); return;}
+  panel.classList.remove("hide");
+  function badge(a){
+    if(!a) return "";
+    if(a.startsWith("AGRÉÉ")) return `<span class="tag t-ok">${a}</span>`;
+    if(a.startsWith("CANDIDAT")) return `<span class="tag t-warn">${a}</span>`;
+    if(a.startsWith("AGRÉMENT HORS")) return `<span class="tag t-warn">${a}</span>`;
+    return `<span class="tag t-dim">${a}</span>`;
+  }
+  // d'abord les agréés/candidats, puis le reste
+  rows.sort((x,y)=>(""+(y.agrement||"")).localeCompare(""+(x.agrement||"")));
+  box.innerHTML="<table class='mini'><thead><tr><th>Fournisseur</th>"+
+    "<th>Catégorie</th><th>Agrément MESR</th><th class='num'>Montant HT</th></tr></thead><tbody>"+
+    rows.map(r=>`<tr>
+      <td class="h">${r.libelle||""}</td>
+      <td>${(r.categorie||"").replace(/_/g," ").toLowerCase()}</td>
+      <td>${badge(r.agrement)}</td>
+      <td class="num">${r.montant_annuel!=null&&r.montant_annuel!==""?eur(r.montant_annuel):"—"}</td>
+    </tr>`).join("")+"</tbody></table>";
 }
 
 function renderIpBox(h){

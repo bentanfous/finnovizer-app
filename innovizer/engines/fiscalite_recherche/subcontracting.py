@@ -27,6 +27,7 @@ CLÉ D'APPARIEMENT
 """
 
 import re
+import unicodedata
 import pandas as pd
 
 # ---------------------------------------------------------------- étape 1
@@ -111,10 +112,13 @@ def screening_fournisseurs(df: pd.DataFrame) -> pd.DataFrame:
          "FABRICATION_PROTO"])
     if "siren" not in out:
         out["siren"] = ""
-    for c in ["montant_annuel", "objet_prestation", "agrement_cir",
+    for c in ["objet_prestation", "agrement_cir",
               "agrement_cii", "validite_annee", "operation_rattachee",
               "piece_agrement", "decision"]:
         out[c] = ""
+    # montant repris de l'extrait s'il en porte un, sinon colonne vide
+    out["montant_annuel"] = (pd.to_numeric(df["montant"], errors="coerce")
+                             if "montant" in df else "")
     return out.sort_values(["a_verifier_mesr", "categorie", "libelle"],
                            ascending=[False, True, True])
 
@@ -122,6 +126,63 @@ def screening_fournisseurs(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------- étape 3-4
 
 STATUTS = ["APPROVED", "FOUND_NOT_VALID_FOR_YEAR", "NOT_FOUND", "NO_SIREN"]
+
+
+# -------------------------------------------- rapprochement par NOM (candidat)
+#
+# La clé autoritaire reste le SIREN (voir en-tête). Mais la doctrine autorise
+# explicitement un rapprochement par raison sociale pour établir une LISTE DE
+# CANDIDATS À VÉRIFIER : c'est ce que fait ce bloc. Il ne conclut jamais à
+# l'éligibilité ni à l'agrément ; il signale « ce nom figure au référentiel,
+# à confirmer par le SIREN et la décision d'agrément ». Appariement par nom
+# NORMALISÉ EXACT (formes juridiques retirées) pour limiter les faux positifs.
+
+_FORMES_JURIDIQUES = {
+    "SAS", "SASU", "SARL", "SA", "EURL", "SNC", "SCOP", "GIE", "SE", "SCA",
+    "SELARL", "SCS", "SEM", "GROUPE", "FRANCE", "INTERNATIONAL", "GROUP",
+}
+
+
+def normaliser_nom(s) -> str:
+    """Nom comparable : sans accents, majuscules, formes juridiques et mots
+    vides retirés, tokens alphanumériques ≥ 2 caractères."""
+    s = unicodedata.normalize("NFKD", str(s))
+    s = "".join(c for c in s if not unicodedata.combining(c)).upper()
+    toks = [t for t in re.findall(r"[A-Z0-9]+", s)
+            if t not in _FORMES_JURIDIQUES and len(t) >= 2]
+    return " ".join(toks)
+
+
+def indexer_referentiel(ref: pd.DataFrame) -> dict:
+    """désignation normalisée -> liste de (début, fin, siren) du MESR, pour un
+    appariement par nom en O(1). Vide si le référentiel n'est pas chargé."""
+    if ref is None or "Désignation" not in getattr(ref, "columns", []):
+        return {}
+    deb = pd.to_numeric(ref.get("Début d'agrément"), errors="coerce")
+    fin = pd.to_numeric(ref.get("Fin d'agrément"), errors="coerce")
+    sir = ref.get("Numéro SIREN")
+    idx: dict[str, list] = {}
+    for d, de, fi, si in zip(ref["Désignation"], deb, fin, sir):
+        k = normaliser_nom(d)
+        if k:
+            idx.setdefault(k, []).append((de, fi, si))
+    return idx
+
+
+def candidat_par_nom(libelle: str, index: dict, annee: int) -> dict | None:
+    """Cherche le libellé fournisseur dans l'index MESR (nom normalisé exact).
+    Renvoie None si rien ne correspond, sinon le SIREN du référentiel, la
+    période d'agrément et si elle couvre l'exercice — à CONFIRMER par le SIREN."""
+    rows = index.get(normaliser_nom(libelle))
+    if not rows:
+        return None
+    couvre = any(pd.notna(de) and pd.notna(fi) and de <= annee <= fi
+                 for de, fi, _ in rows)
+    siren = next((str(int(si)) for _, _, si in rows if pd.notna(si)), "")
+    debuts = [int(de) for de, _, _ in rows if pd.notna(de)]
+    fins = [int(fi) for _, fi, _ in rows if pd.notna(fi)]
+    periode = f"{min(debuts)}-{max(fins)}" if debuts and fins else "?"
+    return dict(siren_mesr=siren, couvre_annee=bool(couvre), periode=periode)
 
 
 def verifier_agrement(siren, annee, referentiel_cir, referentiel_cii):
