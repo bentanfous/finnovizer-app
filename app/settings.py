@@ -12,7 +12,7 @@ En local, les valeurs par défaut écrivent sous ./data.
 import os
 from pathlib import Path
 
-VERSION = "1.4.2"  # fix 500 : NaN (fournisseur sans facture) non serialisable -> sanitize reponse
+VERSION = "1.6.1"  # PayFit : test plomberie live (serveur HTTP local) + session injectable
 
 RAW_DIR = Path(os.environ.get("INNOVIZER_RAW_DIR", "./data/raw_uploads"))
 DERIVED_DIR = Path(os.environ.get("INNOVIZER_DERIVED_DIR", "./data/derived"))

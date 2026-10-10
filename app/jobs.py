@@ -164,6 +164,45 @@ class Job:
             pass
         return resume
 
+    def construire_depuis_payfit(self, *, mock: bool = True, token: str = "",
+                                 mois: str = "2025-01") -> dict:
+        """Construit un Data Hub depuis l'API PayFit (mode mock par défaut :
+        données de démo, sans clé ni réseau). Même substrat, même doctrine que
+        la voie fichiers : collaborators/contracts -> qualification,
+        accounting-v2 -> financial_entries + assiette classée."""
+        from innovizer.connectors import payfit as pf, fec
+        from innovizer.engines.fiscalite_recherche import qualification as q
+
+        client = pf.client_demo() if mock else pf.PayfitClient(token=token)
+        if not mock:
+            client.introspect()
+
+        people = pf.charger_people(client)
+        acc = client.accounting_v2(mois)
+        fe = pf.financial_entries_depuis(acc)
+
+        ref = people.copy()
+        ref["mois_presence"] = 12
+        qual = q.construire(ref)
+        assiette = pf.assiette_depuis(acc, people)      # démo : tout le monde
+        pools = fec.pools_par_classe(fe)
+
+        resume = dict(
+            job=self.id, source="payfit", mock=mock, maj=_now(),
+            personnel=dict(salaries=int(len(people))),
+            qualification=qual.statut.value_counts().to_dict(),
+            assiette_payfit=assiette.to_dict("records"),
+            financial_entries=dict(lignes=int(len(fe))),
+            pools_charges=pools.to_dict("records"),
+            controles=[dict(code="PAYFIT", libelle="source API PayFit",
+                            statut="OK" if mock else "LIVE",
+                            calcule=f"{len(people)} salariés, {len(fe)} écritures",
+                            attendu=None)])
+        resume = _json_safe(resume)
+        (self.derived / "data_hub.json").write_text(
+            json.dumps(resume, ensure_ascii=False, indent=2, default=str))
+        return resume
+
     def _construire_ip_box(self, b, cfg: dict):
         """IP Box : synthèse firm-level dès que des ventes sont présentes ;
         synthèse par actif si un fichier `actifs` et une table projet→actif

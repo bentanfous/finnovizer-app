@@ -110,6 +110,27 @@ def hub(jid: str):
     return json.loads(p.read_text())
 
 
+class BuildPayfit(BaseModel):
+    mock: bool = True
+    token: str = ""
+    mois: str = "2025-01"
+
+
+@app.post("/api/jobs/{jid}/build-payfit")
+def build_payfit(jid: str, body: BuildPayfit = BuildPayfit()):
+    """Construit le Data Hub depuis l'API PayFit. mock=true (défaut) = démo
+    jouable sans clé ; mock=false = live avec une clé API client."""
+    try:
+        j = STORE.get(jid)
+    except KeyError:
+        raise HTTPException(404, "dossier inconnu")
+    try:
+        return j.construire_depuis_payfit(mock=body.mock, token=body.token,
+                                          mois=body.mois)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, f"échec PayFit : {type(e).__name__}: {e}")
+
+
 @app.get("/api/jobs/{jid}/ipbox")
 def ipbox(jid: str):
     """Synthèse IP Box (firm-level + par actif si disponible). Les arbitrages

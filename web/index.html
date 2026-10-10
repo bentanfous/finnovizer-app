@@ -101,6 +101,7 @@
       <div class="grid" id="cats"></div>
       <div class="row" style="margin-top:16px">
         <button id="build" disabled>Construire le Data Hub</button>
+        <button id="buildpayfit" class="ghost">⚡ Démo connecteur PayFit (API)</button>
         <span class="note" id="rgpd">⚠ Données personnelles : n'utilisez de la paie nominative réelle
           qu'avec une base légale RGPD côté client.</span>
       </div>
@@ -124,6 +125,13 @@
     <div class="panel">
       <h2>Qualification du personnel</h2>
       <div id="qual"></div>
+    </div>
+    <div class="panel hide" id="payfitpanel">
+      <h2>Source API — PayFit <span class="v" id="payfitmode"></span></h2>
+      <p class="sub">Données tirées par connecteur API (collaborateurs, contrats,
+        accounting-v2), sans upload. Cotisations patronales classées par la
+        doctrine, par salarié.</p>
+      <div id="payfit"></div>
     </div>
     <div class="panel hide" id="fournpanel">
       <h2>Sous-traitance — organismes agréés CIR/CII</h2>
@@ -238,6 +246,33 @@ $$("#cats input").forEach(inp=>inp.onchange=async e=>{
   }
   $("#build").disabled=false;
 });
+
+$("#buildpayfit").onclick=async()=>{
+  if(!JOB){alert("Créez d'abord un dossier");return;}
+  const b=$("#buildpayfit"); b.textContent="Connexion PayFit…"; b.disabled=true;
+  try{
+    const hub=await api(`/api/jobs/${JOB}/build-payfit`,{method:"POST",
+      headers:{"content-type":"application/json"},body:JSON.stringify({mock:true})});
+    renderHub(hub); renderPayfit(hub); step(1);
+  }catch(e){alert("Échec : "+e.message);}
+  b.textContent="⚡ Démo connecteur PayFit (API)"; b.disabled=false;
+};
+
+function renderPayfit(h){
+  const panel=$("#payfitpanel");
+  if(!h.assiette_payfit){panel.classList.add("hide"); return;}
+  panel.classList.remove("hide");
+  $("#payfitmode").textContent = h.mock ? "mode démo (mock)" : "live";
+  const rows=h.assiette_payfit;
+  $("#payfit").innerHTML="<table class='mini'><thead><tr><th>Salarié</th>"+
+    "<th class='num'>Éligible</th><th class='num'>Non éligible</th>"+
+    "<th class='num'>À arbitrer</th></tr></thead><tbody>"+
+    rows.map(r=>`<tr><td class="h">${r.person_key||""}</td>
+      <td class="num">${r.ELIGIBLE!=null?eur(r.ELIGIBLE):"—"}</td>
+      <td class="num">${r.NON_ELIGIBLE!=null?eur(r.NON_ELIGIBLE):"—"}</td>
+      <td class="num">${r.A_ARBITRER!=null?eur(r.A_ARBITRER):"—"}</td></tr>`).join("")+
+    "</tbody></table>";
+}
 
 $("#build").onclick=async()=>{
   $("#build").textContent="Construction…"; $("#build").disabled=true;
