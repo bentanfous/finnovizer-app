@@ -24,3 +24,20 @@ def test_agreger_somme_ht_et_backfill_siren():
     assert r.montant_ht == 27807.0          # 3200 + 603,60 + 24003,40
     assert r.siren == "325214765"           # backfill depuis les factures qui l'ont
     assert r.nb_factures == 3
+
+
+def test_num_separateur_point_milliers():
+    assert fa._num("3.394,75") == 3394.75      # format LCIE (point = milliers)
+    assert fa._num("6.171,60") == 6171.60
+
+
+def test_siren_tolere_espaces_et_prefixe_B():
+    assert fa._siren("RCS Nanterre B 408 363 174") == "408363174"
+    assert fa._siren("N° SIRET: 408 363 174 00017") == "408363174"
+    assert fa._siren("RCS : B325214765 CHAMBERY") == "325214765"
+    assert fa._siren("aucun identifiant ici") is None
+
+
+def test_fournisseur_depuis_domaine_email():
+    assert fa._fournisseur("… contact@lcie.fr …", "x.pdf") == "LCIE"
+    assert fa._fournisseur("… secretariat@savelec.fr …", "x.pdf") == "SAVELEC"

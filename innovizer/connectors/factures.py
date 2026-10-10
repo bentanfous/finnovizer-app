@@ -19,12 +19,18 @@ facturé n'est éligible que si la prestation est de la R&D sous-traitée à un
 organisme agréé, rattachée à une opération — ce que tranche le conseil.
 """
 
+import os
 import re
 import pandas as pd
 import pypdf
 
-# nombre à la française : "28 804,08" / "3 200,00" -> 28804.08 / 3200.00
+# nombre à la française, séparateur de milliers espace OU point :
+# "28 804,08", "3 200,00", "3.394,75" -> 28804.08 / 3200.00 / 3394.75
 _NUM = r"\d[\d\s  .]*,\d{2}"
+
+#: emails à ignorer pour déduire le fournisseur (client, messageries génériques)
+_EMAILS_IGNORES = {"dunasys", "gmail", "outlook", "hotmail", "yahoo",
+                   "bureauveritas", "wanadoo", "orange", "free"}
 
 
 def _num(s) -> float | None:
@@ -37,40 +43,71 @@ def _num(s) -> float | None:
         return None
 
 
-def _champ(texte, motif, flags=re.I):
-    m = re.search(motif, texte, flags)
-    return m.group(1).strip() if m else None
+def _premier(texte, motifs, flags=re.I | re.S):
+    """Premier motif qui matche, dans l'ordre (robustesse multi-éditeurs)."""
+    for m in motifs:
+        r = re.search(m, texte, flags)
+        if r:
+            return r.group(1).strip()
+    return None
+
+
+def _siren(texte) -> str | None:
+    """SIREN (9 chiffres) depuis RCS, SIRET ou TVA intracom, en tolérant les
+    espaces (« 408 363 174 ») et le préfixe B."""
+    brut = _premier(texte, [
+        r"RCS[^\n]*?\bB?\s*([\d][\d\s]{8,16})",
+        r"SIRET\s*:?\s*([\d][\d\s]{8,18})",
+        r"TVA[^\n]*?FR\s*[0-9A-Z]{2}\s*([\d][\d\s]{8,14})",
+    ])
+    if not brut:
+        return None
+    digits = re.sub(r"\D", "", brut)
+    return digits[:9] if len(digits) >= 9 else None
+
+
+def _fournisseur(texte, path) -> str | None:
+    """Raison sociale : domaine d'email émetteur (générique, marche pour LCIE
+    comme Savelec), à défaut nom avant la forme juridique, à défaut nom de
+    fichier."""
+    for dom in re.findall(r"[\w.\-]+@([\w\-]+)\.", texte):
+        if dom.lower() not in _EMAILS_IGNORES:
+            return dom.upper()
+    nom = _premier(texte, [
+        r"\n([A-ZÀ-Ÿ][\w&'.\- ]{2,40}?)\s+(?:SASU|SAS|SARL|SA|EURL|SNC)\s+(?:au\s+)?[Cc]apital"])
+    if nom:
+        return nom
+    m = re.search(r"([A-Z]{3,})", os.path.basename(path))
+    return m.group(1) if m else None
 
 
 def parse_facture(path: str) -> dict:
-    """Extrait d'une facture PDF : fournisseur, SIREN, n°, date, HT, TTC."""
-    texte = pypdf.PdfReader(path).pages[0].extract_text() or ""
+    """Extrait d'une facture PDF : fournisseur, SIREN, n°, date, HT, TTC.
+    Robuste à plusieurs mises en page (Savelec/PayFit, LCIE…) par cascade de
+    motifs ; constate sans conclure sur l'éligibilité."""
+    # toutes les pages : certains éditeurs (LCIE) portent les totaux en page 2
+    texte = "\n".join((pg.extract_text() or "")
+                      for pg in pypdf.PdfReader(path).pages)
 
-    # SIREN : RCS B<9>, à défaut SIRET (9 premiers), à défaut TVA FRxx<9>
-    siren = (_champ(texte, r"RCS\s*:?\s*B?\s*(\d{9})")
-             or _champ(texte, r"Siret\s*:?\s*(\d{9})")
-             or _champ(texte, r"TVA\s*intracom[^\n]*?FR\w{2}(\d{9})"))
-
-    # fournisseur : la raison sociale qui précède la forme juridique + "Capital"
-    fournisseur = _champ(
-        texte, r"\n?([A-ZÀ-Ÿ][\w&'.\- ]+?)\s+(?:SASU|SAS|SARL|SA|EURL|SNC)\s+Capital")
-    if not fournisseur:  # repli : domaine de l'email
-        dom = _champ(texte, r"[Ee]mail\s*:?\s*[\w.\-]+@([\w\-]+)\.")
-        fournisseur = dom.upper() if dom else None
-
-    ht = _champ(texte, rf"Total\s*HT\s*:\s*Net\s*[àa]\s*payer\s*:\s*({_NUM})")
-    if ht is None:  # repli : premier "Total HT" suivi d'un nombre
-        ht = _champ(texte, rf"Total\s*HT\s*:?\s*({_NUM})")
-    ttc = _champ(texte, rf"Net\s*TTC\s*:\s*({_NUM})")
-
+    ht = _premier(texte, [
+        rf"Total\s*HT\s*:\s*Net\s*[àa]\s*payer\s*:\s*({_NUM})",   # Savelec
+        rf"Total\s*HT\s*:?[\s\S]{{0,40}}?({_NUM})",               # LCIE / générique
+        rf"Montant\s*HT\s*:?[\s\S]{{0,30}}?({_NUM})",
+    ])
+    ttc = _premier(texte, [
+        rf"Net\s*TTC\s*:\s*({_NUM})",                             # Savelec
+        rf"Total\s*TTC[^\d\n]*({_NUM})",                          # LCIE
+        rf"Net\s*[àa]\s*payer\s*:?[\s\S]{{0,30}}?({_NUM})",
+    ])
     return dict(
-        fournisseur=fournisseur,
-        siren=siren,
-        numero=_champ(texte, r"Facture\s*N°\s*(\w+)"),
-        date=_champ(texte, r"Date\s*:\s*([^\n]+?)\s*Facture"),
+        fournisseur=_fournisseur(texte, path),
+        siren=_siren(texte),
+        numero=_premier(texte, [r"Facture\s*N°\s*(\w+)", r"Facture\s*(RI\s*\w+)"]),
+        date=_premier(texte, [r"Date\s*:\s*([^\n]+?)\s*(?:Facture|Date)",
+                              r"Date\s*:?\s*(\d{2}/\d{2}/\d{4})"]),
         montant_ht=_num(ht),
         montant_ttc=_num(ttc),
-        fichier=path.split("/")[-1],
+        fichier=os.path.basename(path),
     )
 
 

@@ -37,6 +37,34 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _json_safe(o):
+    """Rend une structure strictement sérialisable en JSON (Starlette sérialise
+    avec allow_nan=False) : NaN/Inf -> None, scalaires numpy/pandas -> natifs.
+    Sans ça, un seul montant NaN (fournisseur sans facture) fait planter toute
+    la réponse en 500."""
+    import math
+    if isinstance(o, float):
+        return None if (math.isnan(o) or math.isinf(o)) else o
+    if isinstance(o, dict):
+        return {k: _json_safe(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_json_safe(v) for v in o]
+    if o is None or isinstance(o, (str, int, bool)):
+        return o
+    # scalaires numpy / pandas (ont .item()), pd.NA / NaT -> None
+    try:
+        if pd.isna(o):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if hasattr(o, "item"):
+        try:
+            return _json_safe(o.item())
+        except Exception:  # noqa: BLE001
+            return str(o)
+    return o
+
+
 class Job:
     def __init__(self, job_id: str, client: str = "", exercice: int = 2025):
         self.id = job_id
@@ -126,7 +154,7 @@ class Job:
         self._construire_ip_box(b, (arbitrages or {}).get("ip_box", {}))
 
         self._b01 = b
-        resume = self._resumer(b)
+        resume = _json_safe(self._resumer(b))   # NaN -> None, sinon 500 à la sérialisation
         (self.derived / "data_hub.json").write_text(
             json.dumps(resume, ensure_ascii=False, indent=2, default=str))
         # export tableur complet
@@ -302,10 +330,10 @@ class Job:
         s = self._b01.data.get("screening_projets")
         if s is None:
             return []
-        return s[s.statut_screening == "A_INSTRUIRE"].sort_values(
+        return _json_safe(s[s.statut_screening == "A_INSTRUIRE"].sort_values(
             "heures", ascending=False)[
             ["code_projet", "thematique_chapeau", "heures", "collaborateurs"]
-        ].to_dict("records")
+        ].to_dict("records"))
 
     def contexte_projet(self, code_projet: str) -> dict:
         if self._b01 is None:
@@ -313,7 +341,7 @@ class Job:
         ctx = fp.contexte_depuis_brique01(
             code_projet, self._b01.data, config.Dossier(client=self.id, exercice=self.exercice).alias_personnes)
         from dataclasses import asdict
-        return asdict(ctx)
+        return _json_safe(asdict(ctx))
 
     # ------------------------------------------------------------- eva
 
@@ -334,7 +362,7 @@ class Job:
         e = self._nouvel_entretien(code_projet, regime, interlocuteur)
         t = e.prochaine_question()
         from dataclasses import asdict
-        return dict(id=e.id, ouverture=e.ouverture(), question=asdict(t))
+        return _json_safe(dict(id=e.id, ouverture=e.ouverture(), question=asdict(t)))
 
     def ouvrir_entretien_vocal(self, code_projet: str, regime="A_DETERMINER",
                                interlocuteur="") -> dict:
@@ -352,15 +380,15 @@ class Job:
         cl = e.repondre(reponse)
         t = e.prochaine_question()
         self._sauver_entretien(e)
-        return dict(classification=cl, couverture=e.couverture(),
-                    question=asdict(t) if t else None, termine=e.termine())
+        return _json_safe(dict(classification=cl, couverture=e.couverture(),
+                    question=asdict(t) if t else None, termine=e.termine()))
 
     def finaliser(self, entretien_id: str) -> dict:
         from dataclasses import asdict
         e = self._entretiens[entretien_id]
         f = e.finaliser()
         self._sauver_entretien(e)
-        return asdict(f)
+        return _json_safe(asdict(f))
 
     def _sauver_entretien(self, e: Entretien):
         from dataclasses import asdict
